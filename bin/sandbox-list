@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# bin/sandbox-list — list all Project=claude-sandbox instances.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/aws.sh
+source "$REPO_ROOT/lib/aws.sh"
+
+config_load
+aws_caller_identity
+
+json="$(aws_describe_instances_by_tag Project claude-sandbox)"
+count="$(printf '%s' "$json" | jq '[.Reservations[].Instances[]] | length')"
+if [[ "$count" -eq 0 ]]; then
+    echo "no sandboxes in $AWS_REGION"
+    exit 0
+fi
+
+# Header.
+printf '%-22s %-10s %-18s %-10s %-16s\n' NAME STATE TYPE AGE IP
+
+now_epoch="$(date -u +%s)"
+printf '%s' "$json" | jq -r '
+    .Reservations[].Instances[] |
+    [
+        ((.Tags // []) | map(select(.Key=="Name")) | .[0].Value // .InstanceId),
+        .State.Name,
+        .InstanceType,
+        .LaunchTime,
+        (.PublicIpAddress // "-")
+    ] | @tsv
+' | while IFS=$'\t' read -r name state type launch ip; do
+    launch_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "${launch%.*}" "+%s" 2>/dev/null \
+        || date -u -d "$launch" "+%s" 2>/dev/null || echo "$now_epoch")"
+    age_sec=$(( now_epoch - launch_epoch ))
+    if (( age_sec < 3600 )); then
+        age="$(( age_sec / 60 ))m"
+    else
+        age="$(( age_sec / 3600 ))h$(( (age_sec % 3600) / 60 ))m"
+    fi
+    printf '%-22s %-10s %-18s %-10s %-16s\n' "$name" "$state" "$type" "$age" "$ip"
+done
