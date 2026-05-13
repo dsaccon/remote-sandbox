@@ -15,10 +15,23 @@
 **Bash compatibility:** All scripts in `bin/` and `lib/` must run unmodified under **bash 3.2** (the version shipped with macOS at `/bin/bash`). This is to avoid forcing a `brew install bash` on the user's laptop. Practically: no `mapfile` / `readarray`, no associative arrays (`declare -A`), no `${var^^}` case-conversion. Indirect expansion `${!var}`, `printf -v`, and `${BASH_REMATCH[]}` all work in 3.2 and are fine to use. Shebangs use `#!/usr/bin/env bash` so the script picks up either `/bin/bash` 3.2 or a Homebrew bash 5 — both work as long as we stay within the 3.2 feature set. The remote VM's `ami/bootstrap.sh` runs under Ubuntu's bash 5 and has no such restriction.
 
 **Prereqs the engineer needs on their macOS laptop before starting:**
-- `aws` CLI v2 configured (`aws sts get-caller-identity` works)
-- `jq`, `shellcheck`, `bats-core` installed: `brew install awscli jq shellcheck bats-core`
+
+The user (not the agent) installs all laptop-side deps. Document what's needed; never run an install command on their machine.
+
+- `aws` CLI v2 configured (`aws sts get-caller-identity` works) — installed via `brew install awscli`
+- `jq` — installed via `brew install jq`
 - `git`, `curl`, `ssh`, `scp`, `bash` (3.2), `awk`, `sed`, `date` — all ship with macOS, no install needed
 - An EC2 key pair already created in `us-west-2` and named `claude-sandbox` (or whatever they put in `config`); the private key on the local machine at a path their `~/.ssh/config` can find
+
+**Dev-only tooling — `shellcheck`, `bats-core` — does NOT go on the laptop.** Both are installed inside the AMI by `ami/bootstrap.sh` (Task 10). `make lint` and `make test` therefore only work when run inside a sandbox VM. The dev/test loop is:
+
+1. Edit code on the laptop (in this repo)
+2. `git push` (or `rsync`) the changes to a sandbox you've already provisioned
+3. SSH in, `make lint && make test` inside the sandbox
+
+This dogfoods the whole project: development of the sandbox tool happens in a sandbox, and the laptop stays minimal.
+
+**Chicken-and-egg note for the very first AMI bake:** the first `./bin/sandbox build-ami` runs from the laptop without a sandbox to test in. There's nothing to do here except watch the bootstrap output and accept the small unverified-locally risk on that one operation. From the second AMI bake onward, you can `make test` from inside an existing sandbox before re-baking.
 
 ---
 
@@ -2004,7 +2017,8 @@ sudo apt-get update -y
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     ca-certificates curl gnupg lsb-release \
     git tmux htop jq ripgrep fd-find fzf unzip build-essential \
-    python3 python3-pip python-is-python3
+    python3 python3-pip python-is-python3 \
+    shellcheck bats
 
 log "Node.js LTS (NodeSource)"
 curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
@@ -2528,11 +2542,33 @@ auto-shutdown timer terminates the box after `AUTO_SHUTDOWN_HOURS`
 
 ## Development
 
+`shellcheck` and `bats-core` live inside the sandbox, not on your laptop. The
+dev loop:
+
 ```bash
-make lint      # shellcheck
-make test      # bats unit tests (no AWS calls)
-make smoke     # end-to-end against real AWS (costs a few cents)
+# On your laptop: spin up a working sandbox (one-time per dev session).
+./bin/sandbox up --name dev
+
+# After every edit, sync the repo over and run checks inside the box:
+rsync -av --exclude-from=.gitignore --exclude='.git/' ./ \
+    "$(./bin/sandbox list | awk '/^dev /{print $NF}')":~/remote-sandbox/
+
+./bin/sandbox ssh dev
+# inside the sandbox:
+cd ~/remote-sandbox
+make lint      # shellcheck — runs in the sandbox
+make test      # bats unit tests — runs in the sandbox
+exit
+
+# When done:
+./bin/sandbox down dev
+
+# Smoke test against real AWS — run from your laptop, costs a few cents.
+make smoke
 ```
+
+`make smoke` is the only target that runs on the laptop (because it has to
+exercise the laptop CLI itself end-to-end).
 ```
 
 - [ ] **Step 4: Run the full unit suite + lint**
