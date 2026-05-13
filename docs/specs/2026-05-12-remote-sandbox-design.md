@@ -39,7 +39,7 @@ A DIY bash CLI wrapping `aws ec2 run-instances` + a pre-baked AMI is small (~200
 | Cloud | AWS only in v1. Repo structure leaves room for `provision.gcp.sh` later. |
 | Instance type | `m7i-flex.xlarge` default (4 vCPU / 16 GB / ~$0.156/hr on-demand). Configurable. |
 | Spot | On by default with automatic on-demand fallback on `InsufficientInstanceCapacity`. `--no-spot` flag for sessions where interruption would be especially costly. |
-| Region | `us-east-1` default. Configurable. |
+| Region | `us-west-2` (Oregon) default. Configurable. |
 | Disk | 30 GB gp3 root EBS, `DeleteOnTermination=true`. Nothing persists. |
 | Auto-shutdown | Systemd timer on the box: `shutdown -h now` after `AUTO_SHUTDOWN_HOURS` uptime (default 8). |
 | Config location | In-repo at `./config` (gitignored), `./config.example` checked in. |
@@ -97,7 +97,7 @@ Format: bash-sourced (zero extra deps, supports comments). `lib/config.sh` sourc
 
 # Cloud / region
 CLOUD="aws"                       # "aws" | "gcp" (future)
-AWS_REGION="us-east-1"
+AWS_REGION="us-west-2"            # Oregon
 
 # Instance
 INSTANCE_TYPE="m7i-flex.xlarge"   # 16 GB / 4 vCPU — recommended default
@@ -220,7 +220,7 @@ ARM (Graviton) variant is out of scope for v1. Docker images on amd64 have the b
 ## Open questions / risks
 
 - **Anthropic TOS for many ephemeral cloud VMs sharing one subscription:** not publicly documented. The expected usage (one user, a handful of boxes per day, each authed via the supported `claude` login flow) is consistent with normal use, but worth keeping an eye on if usage scales.
-- **Spot interruption rates** vary by region/AZ. If `us-east-1` ever shows high interruption for `m7i-flex.xlarge`, swap region or instance family.
+- **Spot interruption rates** vary by region/AZ. If `us-west-2` ever shows high interruption for `m7i-flex.xlarge`, swap instance family.
 - **AMI staleness:** the user must remember to rerun `build-ami` periodically to get security updates. Mitigation: a small `./bin/sandbox doctor` could warn if the AMI is >30 days old. Optional, deferred.
 
 ## Out of scope / future work
