@@ -1,0 +1,12 @@
+# User-specific config; copy config.example to config and edit
+config
+*.local
+
+# AWS CLI cache
+.aws-cache/
+
+# Local state
+state/
+
+# macOS
+.DS_Store
