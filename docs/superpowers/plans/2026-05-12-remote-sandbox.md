@@ -6,13 +6,18 @@
 
 **Architecture:** A `bin/sandbox` dispatcher routes to per-subcommand scripts (`bin/sandbox-up`, `bin/sandbox-down`, etc.). Shared helpers live in `lib/` (config, AWS wrappers, logging, provisioning). A pre-baked AMI built by `bin/sandbox-build-ami` contains all heavy tooling (claude, node, uv, docker, etc.); per-launch cloud-init only sets hostname and optionally clones one repo. External commands are called through env-var-overridable wrappers (`AWS_CMD`, `CURL_CMD`, `SSH_CMD`, `SCP_CMD`) so tests can stub them without PATH manipulation.
 
-**Tech Stack:** Bash 5, `aws` CLI v2, `jq`, `curl`, `ssh`/`scp`, `bats-core` (tests), `shellcheck` (lint), Ubuntu 24.04 LTS amd64 (AMI base), systemd (auto-shutdown timer).
+**Tech Stack:** Bash (compatible with macOS's stock bash 3.2 at `/bin/bash` — see "Bash compatibility" below), `aws` CLI v2, `jq`, `curl`, `ssh`/`scp`, `bats-core` (tests), `shellcheck` (lint), Ubuntu 24.04 LTS amd64 (AMI base), systemd (auto-shutdown timer).
 
 **Source spec:** `docs/specs/2026-05-12-remote-sandbox-design.md`
 
-**Prereqs the engineer needs on their machine before starting:**
+**Target laptop OS: macOS.** The local CLI is developed and tested on macOS (Apple Silicon or Intel). Linux works too — the scripts are POSIX-flavored bash and only call cross-platform tools — but the dependency install commands and any date-parsing fallbacks are written assuming macOS first. The remote VM is Ubuntu regardless.
+
+**Bash compatibility:** All scripts in `bin/` and `lib/` must run unmodified under **bash 3.2** (the version shipped with macOS at `/bin/bash`). This is to avoid forcing a `brew install bash` on the user's laptop. Practically: no `mapfile` / `readarray`, no associative arrays (`declare -A`), no `${var^^}` case-conversion. Indirect expansion `${!var}`, `printf -v`, and `${BASH_REMATCH[]}` all work in 3.2 and are fine to use. Shebangs use `#!/usr/bin/env bash` so the script picks up either `/bin/bash` 3.2 or a Homebrew bash 5 — both work as long as we stay within the 3.2 feature set. The remote VM's `ami/bootstrap.sh` runs under Ubuntu's bash 5 and has no such restriction.
+
+**Prereqs the engineer needs on their macOS laptop before starting:**
 - `aws` CLI v2 configured (`aws sts get-caller-identity` works)
-- `jq`, `curl`, `git`, `shellcheck`, `bats-core` installed (Homebrew: `brew install jq curl shellcheck bats-core`)
+- `jq`, `shellcheck`, `bats-core` installed: `brew install awscli jq shellcheck bats-core`
+- `git`, `curl`, `ssh`, `scp`, `bash` (3.2), `awk`, `sed`, `date` — all ship with macOS, no install needed
 - An EC2 key pair already created in `us-west-2` and named `claude-sandbox` (or whatever they put in `config`); the private key on the local machine at a path their `~/.ssh/config` can find
 
 ---
@@ -1060,8 +1065,11 @@ mode="$1"
 case "$mode" in
     --all)
         json="$(aws_describe_instances_by_tag Project claude-sandbox)"
-        mapfile -t ids < <(printf '%s' "$json" \
-            | jq -r '.Reservations[].Instances[].InstanceId')
+        ids=()
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            ids+=("$line")
+        done < <(printf '%s' "$json" | jq -r '.Reservations[].Instances[].InstanceId')
         if [[ ${#ids[@]} -eq 0 ]]; then
             log_info "no sandboxes to terminate"
             exit 0
@@ -1075,7 +1083,11 @@ case "$mode" in
         now="$(date -u +%s)"
         json="$(aws_describe_instances_by_tag Project claude-sandbox)"
         # Pick instances where CreatedAt is older than threshold.
-        mapfile -t ids < <(printf '%s' "$json" | jq -r '
+        ids=()
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            ids+=("$line")
+        done < <(printf '%s' "$json" | jq -r '
             .Reservations[].Instances[] |
             { id: .InstanceId,
               created: ((.Tags // []) | map(select(.Key=="CreatedAt")) | .[0].Value // .LaunchTime) }
