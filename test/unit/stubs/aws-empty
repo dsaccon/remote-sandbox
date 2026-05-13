@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Empty AWS stub — records calls, returns whatever fixture file says.
+# Test writes its desired exit code and stdout into $AWS_STUB_RESPONSE before
+# invoking, then reads $AWS_STUB_LOG to assert on calls.
+
+: "${AWS_STUB_LOG:?stub log path not set}"
+printf '%s\n' "$*" >> "$AWS_STUB_LOG"
+
+if [[ -n "${AWS_STUB_RESPONSE:-}" && -f "$AWS_STUB_RESPONSE" ]]; then
+    rc="$(head -n1 "$AWS_STUB_RESPONSE")"
+    tail -n +2 "$AWS_STUB_RESPONSE"
+    exit "$rc"
+fi
+exit 0
