@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# bin/sandbox — dispatcher.
+# Usage: sandbox <command> [args...]
+# Commands: up, down, list, ssh, build-ami
+
+set -euo pipefail
+
+# Resolve repo root regardless of where script is invoked from.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+export SANDBOX_REPO_ROOT="$REPO_ROOT"
+
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: sandbox <command> [args...]
+
+Commands:
+  up [--repo URL] [--name N] [--instance-type T] [--no-spot]
+                 Provision one ephemeral sandbox.
+  down <name|id> | --all | --stale <duration>
+                 Terminate one, all, or stale sandboxes.
+  list           List all sandboxes (Project=claude-sandbox).
+  ssh <name>     SSH into a named sandbox.
+  build-ami      Bake a fresh AMI; writes AMI_ID to ./config on success.
+EOF
+}
+
+if [[ $# -eq 0 ]]; then
+    usage
+    exit 2
+fi
+
+cmd="$1"; shift
+
+# Every command except `build-ami` and `up` still needs a config to know
+# region/etc.  Check config existence here so error is uniform.
+if [[ ! -f "$REPO_ROOT/config" ]]; then
+    if [[ -f "$REPO_ROOT/config.example" ]]; then
+        die "no config file at ./config — copy config.example to config and edit"
+    else
+        die "no config file at ./config and no config.example — repo is broken"
+    fi
+fi
+
+sub="$REPO_ROOT/bin/sandbox-$cmd"
+if [[ ! -x "$sub" ]]; then
+    die "unknown command: $cmd (run 'sandbox' with no args for usage)"
+fi
+
+exec "$sub" "$@"

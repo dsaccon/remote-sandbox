@@ -1,0 +1,25 @@
+# config.example — copy to ./config and edit. This file is checked in;
+# your ./config is gitignored.
+
+# ---- Cloud / region ----
+CLOUD="aws"                       # "aws" (only option in v1)
+AWS_REGION="us-west-2"            # Oregon
+
+# ---- Instance ----
+INSTANCE_TYPE="m7i-flex.xlarge"   # 16 GB / 4 vCPU recommended
+USE_SPOT=true
+SPOT_FALLBACK_ON_DEMAND=true
+
+# ---- Identity / access ----
+SSH_KEY_NAME="claude-sandbox"     # an EC2 key pair you've already created
+SSH_USER="ubuntu"
+
+# ---- AMI ----
+# Populated by `./bin/sandbox build-ami` on success.
+AMI_ID=""
+
+# ---- Lifecycle guardrails ----
+AUTO_SHUTDOWN_HOURS=8             # 0 disables the in-VM shutdown timer
+
+# ---- Optional: dotfiles cloned to ~ during AMI bake ----
+DOTFILES_REPO=""                  # e.g. "https://github.com/dsaccon/dotfiles.git"
