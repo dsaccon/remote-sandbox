@@ -1,0 +1,16 @@
+#cloud-config
+# Rendered by lib/provision.sh — placeholders {{NAME}}, {{CLONE_BLOCK}},
+# {{AUTO_SHUTDOWN_HOURS}}.
+hostname: {{NAME}}
+preserve_hostname: false
+
+write_files:
+  - path: /etc/default/auto-shutdown
+    permissions: "0644"
+    content: |
+      AUTO_SHUTDOWN_HOURS={{AUTO_SHUTDOWN_HOURS}}
+
+runcmd:
+  - systemctl daemon-reload
+  - [ systemctl, enable, --now, auto-shutdown.timer ]
+{{CLONE_BLOCK}}
