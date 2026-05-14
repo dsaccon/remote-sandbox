@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# bin/sandbox-up — provision one sandbox.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/aws.sh
+source "$REPO_ROOT/lib/aws.sh"
+# shellcheck source=../lib/provision.sh
+source "$REPO_ROOT/lib/provision.sh"
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: sandbox up [--repo URL] [--name N] [--instance-type T] [--no-spot]
+EOF
+}
+
+REPO_URL=""
+NAME=""
+NO_SPOT=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --repo)           REPO_URL="$2"; shift 2 ;;
+        --name)           NAME="$2"; shift 2 ;;
+        --instance-type)  config_set_from_flag INSTANCE_TYPE "$2"; shift 2 ;;
+        --no-spot)        NO_SPOT=1; shift ;;
+        -h|--help)        usage; exit 0 ;;
+        *)                usage; exit 2 ;;
+    esac
+done
+
+config_load
+
+# Default name = sandbox-<8 hex chars>
+if [[ -z "$NAME" ]]; then
+    NAME="sandbox-$(LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c8)"
+fi
+
+USE_SPOT_FINAL="${USE_SPOT:-false}"
+[[ "$NO_SPOT" -eq 1 ]] && USE_SPOT_FINAL="false"
+
+preflight_or_die
+
+read -r id ip < <(provision_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL")
+
+cat <<EOF
+
+  $NAME ready ($id)
+
+  ssh ${SSH_USER}@${ip}
+
+  Once in, run \`claude\` to authenticate this VM.
+  Auto-shutdown in ${AUTO_SHUTDOWN_HOURS}h.
+
+EOF
