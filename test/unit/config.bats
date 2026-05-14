@@ -71,3 +71,17 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *"no config file"* ]]
 }
+
+@test "config_write_ami_id updates AMI_ID line in place" {
+    write_config <<'EOF'
+INSTANCE_TYPE="m7i-flex.xlarge"
+AMI_ID=""
+USE_SPOT=true
+EOF
+    source "$SANDBOX_REPO_ROOT/lib/config.sh"
+    config_load
+    config_write_ami_id "ami-new123"
+    grep -q '^AMI_ID="ami-new123"' "$SANDBOX_REPO_ROOT/config"
+    # Other lines preserved.
+    grep -q '^INSTANCE_TYPE="m7i-flex.xlarge"' "$SANDBOX_REPO_ROOT/config"
+}

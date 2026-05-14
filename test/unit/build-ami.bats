@@ -1,0 +1,61 @@
+#!/usr/bin/env bats
+
+setup() {
+    REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
+    export SANDBOX_REPO_ROOT="$(mktemp -d)"
+    mkdir -p "$SANDBOX_REPO_ROOT/lib" "$SANDBOX_REPO_ROOT/ami/systemd" "$SANDBOX_REPO_ROOT/bin"
+    cp "$REPO_ROOT"/lib/{log,config,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    cp "$REPO_ROOT/ami/bootstrap.sh" "$SANDBOX_REPO_ROOT/ami/"
+    cp "$REPO_ROOT"/ami/systemd/*.{service,timer} "$SANDBOX_REPO_ROOT/ami/systemd/"
+    cp "$REPO_ROOT/bin/sandbox-build-ami" "$SANDBOX_REPO_ROOT/bin/"
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+AWS_REGION="us-west-2"
+SSH_KEY_NAME="claude-sandbox"
+SSH_USER="ubuntu"
+AMI_ID=""
+DOTFILES_REPO=""
+EOF
+    export AWS_STUB_LOG="$BATS_TEST_TMPDIR/aws.log"; : > "$AWS_STUB_LOG"
+    export AWS_STUB_RESPONSE="$BATS_TEST_TMPDIR/aws-resp"
+    export AWS_CMD="$REPO_ROOT/test/unit/stubs/aws-empty"
+    # ssh / scp stubs that succeed silently.
+    export SSH_CMD="$BATS_TEST_TMPDIR/ssh-ok"
+    export SCP_CMD="$BATS_TEST_TMPDIR/scp-ok"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$SSH_CMD"; chmod +x "$SSH_CMD"
+    printf '#!/usr/bin/env bash\nexit 0\n' > "$SCP_CMD"; chmod +x "$SCP_CMD"
+    # curl stub for ssh-readiness check (we test against the netcat path differently)
+    export CURL_CMD="$BATS_TEST_TMPDIR/curl-ok"
+    printf '#!/usr/bin/env bash\necho 1.2.3.4\n' > "$CURL_CMD"; chmod +x "$CURL_CMD"
+}
+
+teardown() { rm -rf "$SANDBOX_REPO_ROOT"; }
+
+@test "build-ami writes new AMI_ID to config on success" {
+    # Walk through the calls:
+    #   1: aws_caller_identity (sts get-caller-identity)
+    #   2: describe-key-pairs
+    #   3: describe-security-groups (ensure_sg)
+    #   4: describe-security-groups (set ingress: list rules)
+    #   5: authorize-security-group-ingress (no existing rule to revoke)
+    #   6: describe-images (find base Ubuntu AMI)        → ami-base
+    #   7: run-instances (bake VM)                       → i-bake
+    #   8: wait instance-status-ok
+    #   9: describe-instances (get IP)                   → 1.2.3.4
+    #  10: create-image                                  → ami-new123
+    #  11: wait image-available
+    #  12: terminate-instances
+    cat > "$AWS_STUB_RESPONSE" <<'EOF'
+0
+ami-new123
+EOF
+    # Default stub returns the same output for every call. That's fine for
+    # asserting on overall orchestration — we check the call log below.
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-build-ami"
+    [ "$status" -eq 0 ]
+    grep -q -- 'ec2 describe-images.*099720109477' "$AWS_STUB_LOG"
+    grep -q -- 'ec2 run-instances' "$AWS_STUB_LOG"
+    grep -q -- 'ec2 create-image' "$AWS_STUB_LOG"
+    grep -q -- 'ec2 wait image-available' "$AWS_STUB_LOG"
+    grep -q -- 'ec2 terminate-instances' "$AWS_STUB_LOG"
+    grep -q '^AMI_ID="ami-new123"' "$SANDBOX_REPO_ROOT/config"
+}

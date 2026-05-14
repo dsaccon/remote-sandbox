@@ -76,3 +76,19 @@ config_set_from_flag() {
     printf -v "$key" '%s' "$val"
     export "$key"
 }
+
+# config_write_ami_id NEW_ID — rewrite the AMI_ID="..." line in ./config.
+config_write_ami_id() {
+    : "${SANDBOX_REPO_ROOT:?config_write_ami_id: SANDBOX_REPO_ROOT not set}"
+    local new_id="$1"
+    local cfg="$SANDBOX_REPO_ROOT/config"
+    [[ -f "$cfg" ]] || die "no config at $cfg"
+    local tmp; tmp="$(mktemp)"
+    if grep -q '^AMI_ID=' "$cfg"; then
+        sed -E 's|^AMI_ID=.*|AMI_ID="'"$new_id"'"|' "$cfg" > "$tmp"
+    else
+        cp "$cfg" "$tmp"
+        printf '\nAMI_ID="%s"\n' "$new_id" >> "$tmp"
+    fi
+    mv "$tmp" "$cfg"
+}

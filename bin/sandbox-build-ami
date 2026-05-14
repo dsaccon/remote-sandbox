@@ -1,0 +1,91 @@
+#!/usr/bin/env bash
+# bin/sandbox-build-ami — bake a fresh AMI.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/aws.sh
+source "$REPO_ROOT/lib/aws.sh"
+# shellcheck source=../lib/provision.sh
+source "$REPO_ROOT/lib/provision.sh"
+
+: "${SSH_CMD:=ssh}"
+: "${SCP_CMD:=scp}"
+
+BAKE_INSTANCE_TYPE="t3.medium"
+
+config_load
+aws_caller_identity
+aws_describe_key_pair "$SSH_KEY_NAME"
+
+# Ensure SG and SSH ingress to current IP.
+sg_id="$(ensure_sg)"
+cidr="$(current_public_ip_cidr)"
+log_info "security group: $sg_id; SSH ingress = $cidr"
+aws_set_sg_ingress_to "$sg_id" "$cidr"
+
+log_info "finding latest Ubuntu 24.04 amd64 AMI..."
+base_ami="$(aws_describe_ubuntu_2404_ami)"
+[[ "$base_ami" == ami-* ]] || die "could not find Ubuntu base AMI"
+log_info "base AMI: $base_ami"
+
+bake_name="sandbox-bake-$(date -u +%Y%m%dT%H%M%SZ)"
+log_info "launching bake VM ($BAKE_INSTANCE_TYPE) as $bake_name..."
+instance_id="$(aws_run_simple "$base_ami" "$BAKE_INSTANCE_TYPE" "$SSH_KEY_NAME" "$sg_id" "$bake_name")"
+log_info "bake VM: $instance_id"
+
+# Cleanup-on-failure trap leaves the instance up so the user can debug.
+cleanup_on_failure=1
+trap '
+    if [[ $cleanup_on_failure -eq 1 ]]; then
+        log_warn "bake failed; leaving $instance_id running for debugging."
+        ip="$(aws_get_instance_ip "$instance_id" 2>/dev/null || echo "?")"
+        echo "  Debug:  ssh ${SSH_USER}@${ip}"
+        echo "  Tear down when done:  ./bin/sandbox down $instance_id"
+    fi' EXIT
+
+aws_wait_running "$instance_id"
+ip="$(aws_get_instance_ip "$instance_id")"
+log_info "bake VM IP: $ip"
+
+ssh_opts=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR -o ConnectTimeout=10)
+
+log_info "waiting for SSH..."
+for i in {1..30}; do
+    if "$SSH_CMD" "${ssh_opts[@]}" "${SSH_USER}@${ip}" true 2>/dev/null; then
+        break
+    fi
+    sleep 5
+    [[ $i -eq 30 ]] && die "SSH never came up on $ip"
+done
+
+log_info "uploading bootstrap files..."
+"$SCP_CMD" "${ssh_opts[@]}" \
+    "$REPO_ROOT/ami/bootstrap.sh" \
+    "$REPO_ROOT/ami/systemd/auto-shutdown.service" \
+    "$REPO_ROOT/ami/systemd/auto-shutdown.timer" \
+    "${SSH_USER}@${ip}:/tmp/"
+
+log_info "running bootstrap (this can take 5-10 minutes)..."
+"$SSH_CMD" "${ssh_opts[@]}" "${SSH_USER}@${ip}" \
+    "DOTFILES_REPO='${DOTFILES_REPO:-}' bash /tmp/bootstrap.sh"
+
+ami_name="claude-sandbox-$(date -u +%Y%m%dT%H%M%SZ)"
+log_info "creating image $ami_name..."
+new_ami="$(aws_create_image "$instance_id" "$ami_name")"
+log_info "new AMI: $new_ami (waiting for available)..."
+aws_wait_image_available "$new_ami"
+
+log_info "writing AMI_ID into ./config"
+config_write_ami_id "$new_ami"
+
+log_info "terminating bake VM..."
+aws_terminate_instances "$instance_id" >/dev/null
+
+cleanup_on_failure=0
+log_info "done. AMI_ID=$new_ami"

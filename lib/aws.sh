@@ -130,3 +130,37 @@ aws_get_instance_ip() {
     _aws ec2 describe-instances --instance-ids "$id" \
         --query 'Reservations[0].Instances[0].PublicIpAddress' --output text
 }
+
+# Latest Canonical Ubuntu 24.04 LTS amd64 AMI in current region.
+aws_describe_ubuntu_2404_ami() {
+    _aws ec2 describe-images \
+        --owners 099720109477 \
+        --filters \
+            'Name=name,Values=ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*' \
+            'Name=state,Values=available' \
+        --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+        --output text
+}
+
+aws_create_image() {
+    local instance_id="$1"
+    local name="$2"
+    _aws ec2 create-image --instance-id "$instance_id" --name "$name" \
+        --no-reboot --query ImageId --output text
+}
+
+aws_wait_image_available() {
+    local ami_id="$1"
+    _aws ec2 wait image-available --image-ids "$ami_id"
+}
+
+aws_run_simple() {
+    # Minimal launch for the bake VM: ami, type, key, sg, tag.
+    local ami="$1" itype="$2" key="$3" sg="$4" name="$5"
+    _aws ec2 run-instances \
+        --image-id "$ami" --instance-type "$itype" --key-name "$key" \
+        --security-group-ids "$sg" --count 1 \
+        --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=30,VolumeType=gp3,DeleteOnTermination=true}' \
+        --tag-specifications "ResourceType=instance,Tags=[{Key=Project,Value=claude-sandbox},{Key=Name,Value=$name},{Key=BakeRole,Value=bake}]" \
+        --query 'Instances[0].InstanceId' --output text
+}
