@@ -1,0 +1,15 @@
+[Unit]
+Description=Sandbox defense-in-depth auto-shutdown
+ConditionPathExists=/etc/default/auto-shutdown
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/default/auto-shutdown
+ExecStart=/bin/bash -c '\
+  if [[ -z "$AUTO_SHUTDOWN_HOURS" || "$AUTO_SHUTDOWN_HOURS" -le 0 ]]; then exit 0; fi; \
+  uptime_sec=$(awk "{print int(\\$1)}" /proc/uptime); \
+  threshold=$(( AUTO_SHUTDOWN_HOURS * 3600 )); \
+  if (( uptime_sec >= threshold )); then \
+    logger -t auto-shutdown "uptime=$uptime_sec >= threshold=$threshold, shutting down"; \
+    shutdown -h now; \
+  fi'
