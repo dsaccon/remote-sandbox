@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# bin/sandbox-ssh — SSH into a named sandbox.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/aws.sh
+source "$REPO_ROOT/lib/aws.sh"
+
+: "${SSH_CMD:=ssh}"
+
+[[ $# -eq 1 ]] || die "Usage: sandbox ssh <name>"
+name="$1"
+
+config_load
+aws_caller_identity
+
+json="$(aws_describe_instances_by_tag Name "$name")"
+ip="$(printf '%s' "$json" | jq -r '.Reservations[].Instances[] | select(.State.Name=="running") | .PublicIpAddress' | head -n1)"
+
+if [[ -z "$ip" || "$ip" == "null" ]]; then
+    die "no sandbox named $name (or it's not running)"
+fi
+
+exec "$SSH_CMD" "${SSH_USER}@${ip}"
