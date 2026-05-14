@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# bin/sandbox-down — terminate one sandbox, all of them, or stale ones.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/aws.sh
+source "$REPO_ROOT/lib/aws.sh"
+
+config_load
+aws_caller_identity
+
+usage() {
+    cat >&2 <<'EOF'
+Usage: sandbox down <name|id>
+       sandbox down --all
+       sandbox down --stale <duration>   # e.g. 30m, 24h, 2d
+EOF
+}
+
+# parse_duration_to_seconds 24h | 30m | 2d
+parse_duration_to_seconds() {
+    local d="$1"
+    [[ "$d" =~ ^([0-9]+)([smhd])$ ]] || die "bad duration: $d (use 30m, 24h, 2d, etc.)"
+    local n="${BASH_REMATCH[1]}" u="${BASH_REMATCH[2]}"
+    case "$u" in
+        s) echo "$n" ;;
+        m) echo $(( n * 60 )) ;;
+        h) echo $(( n * 3600 )) ;;
+        d) echo $(( n * 86400 )) ;;
+    esac
+}
+
+iso_to_epoch() {
+    local iso="${1%.*}"  # strip fractional seconds
+    iso="${iso%Z}"
+    date -u -j -f "%Y-%m-%dT%H:%M:%S" "$iso" "+%s" 2>/dev/null \
+        || date -u -d "${iso}Z" "+%s"
+}
+
+if [[ $# -eq 0 ]]; then usage; exit 2; fi
+
+mode="$1"
+case "$mode" in
+    --all)
+        json="$(aws_describe_instances_by_tag Project claude-sandbox)"
+        ids=()
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            ids+=("$line")
+        done < <(printf '%s' "$json" | jq -r '.Reservations[].Instances[].InstanceId')
+        if [[ ${#ids[@]} -eq 0 ]]; then
+            log_info "no sandboxes to terminate"
+            exit 0
+        fi
+        log_info "terminating: ${ids[*]}"
+        aws_terminate_instances "${ids[@]}" >/dev/null
+        ;;
+    --stale)
+        [[ $# -lt 2 ]] && { usage; exit 2; }
+        threshold_sec="$(parse_duration_to_seconds "$2")"
+        now="$(date -u +%s)"
+        json="$(aws_describe_instances_by_tag Project claude-sandbox)"
+        # Pick instances where CreatedAt is older than threshold.
+        ids=()
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            ids+=("$line")
+        done < <(printf '%s' "$json" | jq -r '
+            .Reservations[].Instances[] |
+            { id: .InstanceId,
+              created: ((.Tags // []) | map(select(.Key=="CreatedAt")) | .[0].Value // .LaunchTime) }
+            | "\(.id)\t\(.created)"' | while IFS=$'\t' read -r id created; do
+                created_epoch="$(iso_to_epoch "$created")"
+                age=$(( now - created_epoch ))
+                if (( age >= threshold_sec )); then
+                    echo "$id"
+                fi
+            done)
+        if [[ ${#ids[@]} -eq 0 ]]; then
+            log_info "no stale sandboxes"
+            exit 0
+        fi
+        log_info "terminating stale: ${ids[*]}"
+        aws_terminate_instances "${ids[@]}" >/dev/null
+        ;;
+    --help|-h)
+        usage; exit 0 ;;
+    -*)
+        usage; exit 2 ;;
+    *)
+        # Single name or id.
+        target="$mode"
+        if [[ "$target" =~ ^i-[0-9a-f]+$ ]]; then
+            id="$target"
+        else
+            json="$(aws_describe_instances_by_tag Project claude-sandbox)"
+            id="$(printf '%s' "$json" | jq -r --arg n "$target" '
+                .Reservations[].Instances[] |
+                select((.Tags // []) | any(.Key=="Name" and .Value==$n)) |
+                .InstanceId' | head -n1)"
+            if [[ -z "$id" ]]; then
+                die "no sandbox named $target"
+            fi
+        fi
+        log_info "terminating $target ($id)"
+        aws_terminate_instances "$id" >/dev/null
+        ;;
+esac
