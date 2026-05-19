@@ -51,7 +51,7 @@ Expected cost at typical use (a few 1-3 hour sessions/day on spot): ~$10-15/mont
 
 ### Repo layout
 
-Everything self-contained inside `/Users/david/Desktop/Dave/work-business/dev/misc/remote-sandbox/`:
+Everything self-contained inside the repo root:
 
 ```
 remote-sandbox/

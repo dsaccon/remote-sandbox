@@ -6,12 +6,35 @@ Claude Code. One fresh box per task, terminated when done.
 See `docs/specs/2026-05-12-remote-sandbox-design.md` for the full design and
 `docs/superpowers/plans/2026-05-12-remote-sandbox.md` for the build plan.
 
+## Local footprint — deliberately tiny
+
+This is a near-zero-dependency utility by design. Everything you have to
+install on the laptop:
+
+```bash
+brew install awscli jq
+```
+
+That's it.
+
+- **Already on macOS, no install needed:** `git`, `curl`, `ssh`, `scp`,
+  `bash` (3.2 is fine — scripts are 3.2-clean), `awk`, `sed`, `date`,
+  `openssl`.
+- **Lives inside the sandbox, NOT on your laptop:** `shellcheck`, `bats-core`,
+  neovim, Node, `pnpm`, `bun`, `uv`, Docker, `gh`, the Claude Code CLI —
+  all installed during the AMI bake (one-time, ~10 min) so they never
+  touch your main machine.
+
+This narrow footprint is the project's reason for existing: to limit blast
+radius from supply-chain attacks on dev tooling by keeping the laptop side
+spartan. The tool that *creates* sandboxes is itself one of the things that
+should run with minimal local trust.
+
 ## Prerequisites
 
 - macOS laptop (Linux works too; install/setup commands assume macOS)
 - `aws` CLI v2, configured (`aws sts get-caller-identity` works) — installed via `brew install awscli`
 - `jq` — installed via `brew install jq`
-- `git`, `curl`, `ssh`, `scp`, `bash` (3.2 is fine) — ship with macOS
 - An EC2 key pair created in `us-west-2`, named whatever you set as
   `SSH_KEY_NAME` in `./config` (default: `claude-sandbox`). Save its
   private key somewhere your SSH agent or `~/.ssh/config` can find:
