@@ -5,6 +5,7 @@ config
 # Secrets / credentials — NEVER commit
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 
