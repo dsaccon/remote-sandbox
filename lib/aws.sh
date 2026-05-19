@@ -124,10 +124,16 @@ aws_wait_running() {
 }
 
 aws_describe_instances_by_tag() {
+    # Default state filter excludes only the implicit-default terminator state
+    # that AWS purges after ~1 hour ("terminated"), keeping callers from being
+    # surprised by long-dead instances. Pass a custom filter as the 3rd arg
+    # if you also want terminated instances (e.g. for `list` to show the
+    # full shutdown lifecycle).
     local key="$1"
     local val="$2"
+    local states="${3:-pending,running,stopping,stopped,shutting-down}"
     _aws ec2 describe-instances \
-        --filters "Name=tag:$key,Values=$val" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+        --filters "Name=tag:$key,Values=$val" "Name=instance-state-name,Values=$states" \
         --output json
 }
 

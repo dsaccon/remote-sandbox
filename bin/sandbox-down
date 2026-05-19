@@ -53,7 +53,11 @@ if [[ $# -eq 0 ]]; then usage; exit 2; fi
 mode="$1"
 case "$mode" in
     --all)
-        json="$(aws_describe_instances_by_tag Project claude-sandbox)"
+        # Narrow filter to instances that aren't already being terminated;
+        # the default helper filter now includes shutting-down, which we
+        # don't want to re-terminate.
+        json="$(aws_describe_instances_by_tag Project claude-sandbox \
+            'pending,running,stopping,stopped')"
         ids=()
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
@@ -70,7 +74,9 @@ case "$mode" in
         [[ $# -lt 2 ]] && { usage; exit 2; }
         threshold_sec="$(parse_duration_to_seconds "$2")"
         now="$(date -u +%s)"
-        json="$(aws_describe_instances_by_tag Project claude-sandbox)"
+        # Narrow filter — don't re-terminate already-shutting-down instances.
+        json="$(aws_describe_instances_by_tag Project claude-sandbox \
+            'pending,running,stopping,stopped')"
         # Pick instances where CreatedAt is older than threshold.
         ids=()
         while IFS= read -r line; do
@@ -101,23 +107,33 @@ case "$mode" in
     *)
         # Single name or id.
         target="$mode"
+        state=""
         if [[ "$target" =~ ^i-[0-9a-f]+$ ]]; then
             id="$target"
         else
-            json="$(aws_describe_instances_by_tag Project claude-sandbox)"
-            # Limit inside jq (via first()) instead of piping to `head -n1`,
-            # which can SIGPIPE jq under `set -o pipefail` if more than one
-            # instance matches.
-            id="$(printf '%s' "$json" | jq -r --arg n "$target" '
+            # Broad filter so we can detect already-shutting-down / terminated
+            # instances by name and skip the redundant terminate call.
+            json="$(aws_describe_instances_by_tag Project claude-sandbox \
+                'pending,running,stopping,stopped,shutting-down,terminated')"
+            # Emit id + state for the first matching instance; first() avoids
+            # SIGPIPE under pipefail if multiple instances share a name.
+            match="$(printf '%s' "$json" | jq -r --arg n "$target" '
                 first(
                     .Reservations[].Instances[] |
                     select((.Tags // []) | any(.Key=="Name" and .Value==$n)) |
-                    .InstanceId
+                    "\(.InstanceId)\t\(.State.Name)"
                 ) // empty')"
-            if [[ -z "$id" ]]; then
+            if [[ -z "$match" ]]; then
                 die "no sandbox named $target"
             fi
+            IFS=$'\t' read -r id state <<< "$match"
         fi
+        case "$state" in
+            shutting-down|terminated)
+                log_info "$target ($id) is already $state — nothing to do"
+                exit 0
+                ;;
+        esac
         log_info "shutting down $target ($id) — track via './bin/sandbox list'"
         aws_terminate_instances "$id" >/dev/null
         ;;

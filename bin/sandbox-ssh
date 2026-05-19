@@ -32,7 +32,10 @@ name="$1"
 config_load
 aws_caller_identity
 
-json="$(aws_describe_instances_by_tag Name "$name")"
+# Include shutting-down + terminated so the state-based error messages
+# below trigger correctly during/after `sandbox down`.
+json="$(aws_describe_instances_by_tag Name "$name" \
+    'pending,running,stopping,stopped,shutting-down,terminated')"
 
 # First check: does ANY instance with this name exist (in any state)?
 state="$(printf '%s' "$json" | jq -r 'first(.Reservations[].Instances[].State.Name) // empty')"
