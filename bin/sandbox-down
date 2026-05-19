@@ -11,16 +11,22 @@ source "$REPO_ROOT/lib/config.sh"
 # shellcheck source=../lib/aws.sh
 source "$REPO_ROOT/lib/aws.sh"
 
-config_load
-aws_caller_identity
-
 usage() {
-    cat >&2 <<'EOF'
+    cat <<'EOF'
 Usage: sandbox down <name|id>
        sandbox down --all
        sandbox down --stale <duration>   # e.g. 30m, 24h, 2d
 EOF
 }
+
+# Early --help check (before config / AWS calls), so help works even
+# when credentials aren't loaded.
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
+
+config_load
+aws_caller_identity
 
 # parse_duration_to_seconds 24h | 30m | 2d
 parse_duration_to_seconds() {

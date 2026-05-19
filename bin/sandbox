@@ -14,29 +14,42 @@ export SANDBOX_REPO_ROOT="$REPO_ROOT"
 source "$REPO_ROOT/lib/log.sh"
 
 usage() {
-    cat >&2 <<'EOF'
+    cat <<'EOF'
 Usage: sandbox <command> [args...]
+       sandbox --help
 
 Commands:
   up [--repo URL] [--name N] [--instance-type T] [--no-spot]
-                 Provision one ephemeral sandbox.
+                 Provision one ephemeral sandbox. Prints `ssh ubuntu@<ip>`.
   down <name|id> | --all | --stale <duration>
-                 Terminate one, all, or stale sandboxes.
+                 Terminate one sandbox, all of them, or boxes older than
+                 the given duration (e.g. 30m, 24h, 2d).
   list           List all sandboxes (Project=claude-sandbox).
   ssh <name>     SSH into a named sandbox.
   build-ami      Bake a fresh AMI; writes AMI_ID to ./config on success.
+
+Run `sandbox <command> --help` for command-specific options.
+
+Environment must have AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
+AWS_DEFAULT_REGION set — do `source ./load-env.sh` in each new shell.
+Settings (instance type, region, key pair, AMI ID, etc.) live in ./config.
 EOF
 }
 
+# Top-level help — must short-circuit BEFORE the config check so it works
+# even when the repo isn't set up yet.
 if [[ $# -eq 0 ]]; then
-    usage
+    usage >&2
     exit 2
 fi
+case "$1" in
+    -h|--help|help) usage; exit 0 ;;
+esac
 
 cmd="$1"; shift
 
-# Every command except `build-ami` and `up` still needs a config to know
-# region/etc.  Check config existence here so error is uniform.
+# Every command needs a config to know region/etc.  Check existence here
+# so error is uniform.
 if [[ ! -f "$REPO_ROOT/config" ]]; then
     if [[ -f "$REPO_ROOT/config.example" ]]; then
         die "no config file at ./config — copy config.example to config and edit"
@@ -47,7 +60,7 @@ fi
 
 sub="$REPO_ROOT/bin/sandbox-$cmd"
 if [[ ! -x "$sub" ]]; then
-    die "unknown command: $cmd (run 'sandbox' with no args for usage)"
+    die "unknown command: $cmd (try 'sandbox --help')"
 fi
 
 exec "$sub" "$@"

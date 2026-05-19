@@ -11,6 +11,18 @@ source "$REPO_ROOT/lib/config.sh"
 # shellcheck source=../lib/aws.sh
 source "$REPO_ROOT/lib/aws.sh"
 
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+Usage: sandbox list
+
+List every sandbox (instances tagged Project=claude-sandbox) in the
+configured region, with columns: NAME, STATE, TYPE, AGE, IP.
+EOF
+        exit 0
+        ;;
+esac
+
 config_load
 aws_caller_identity
 

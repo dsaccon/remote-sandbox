@@ -61,6 +61,9 @@ You'll see `load-env: exported [AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFA
 
 ## Commands
 
+Run `./bin/sandbox --help` for the full list, or `./bin/sandbox <cmd> --help`
+for details on any subcommand.
+
 ```bash
 ./bin/sandbox up                       # spin up a fresh box (spot)
 ./bin/sandbox up --repo URL            #   ...and clone a repo into it

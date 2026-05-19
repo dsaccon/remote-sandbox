@@ -14,8 +14,18 @@ source "$REPO_ROOT/lib/aws.sh"
 source "$REPO_ROOT/lib/provision.sh"
 
 usage() {
-    cat >&2 <<'EOF'
+    cat <<'EOF'
 Usage: sandbox up [--repo URL] [--name N] [--instance-type T] [--no-spot]
+
+Provision one ephemeral sandbox VM and print the SSH command to reach it.
+
+Flags:
+  --repo URL          Clone this git URL onto the box during cloud-init.
+  --name N            Use N as the sandbox name (default: random hex).
+  --instance-type T   Override INSTANCE_TYPE from config (e.g. t3.large).
+  --no-spot           Skip spot, go straight to on-demand. Use this for
+                      sessions where a mid-task spot reclaim would be
+                      especially costly.
 EOF
 }
 
@@ -29,7 +39,7 @@ while [[ $# -gt 0 ]]; do
         --instance-type)  config_set_from_flag INSTANCE_TYPE "$2"; shift 2 ;;
         --no-spot)        NO_SPOT=1; shift ;;
         -h|--help)        usage; exit 0 ;;
-        *)                usage; exit 2 ;;
+        *)                usage >&2; exit 2 ;;
     esac
 done
 

@@ -16,6 +16,29 @@ source "$REPO_ROOT/lib/provision.sh"
 : "${SSH_CMD:=ssh}"
 : "${SCP_CMD:=scp}"
 
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+Usage: sandbox build-ami
+
+Bake a fresh AMI:
+  1. Find latest Ubuntu 24.04 amd64 AMI in $AWS_REGION (Canonical owner).
+  2. Launch a t3.medium bake VM from it.
+  3. Wait for SSH, scp ami/bootstrap.sh + systemd units to the VM.
+  4. Run bootstrap.sh (~5-10 min): installs claude, node, uv, docker,
+     nvim, gh, and your DOTFILES_REPO if set.
+  5. Create AMI from the bake VM, wait for `available`.
+  6. Write the new AMI_ID into ./config, terminate the bake VM.
+
+On failure during bootstrap the bake VM is left running; you'll see an
+SSH command to debug it and `sandbox down i-... ` to tear it down.
+
+Cost: ~$0.007 per bake plus ~$1.50/month per AMI snapshot retained.
+EOF
+        exit 0
+        ;;
+esac
+
 BAKE_INSTANCE_TYPE="t3.medium"
 
 config_load

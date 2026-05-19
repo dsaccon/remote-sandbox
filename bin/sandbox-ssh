@@ -13,7 +13,20 @@ source "$REPO_ROOT/lib/aws.sh"
 
 : "${SSH_CMD:=ssh}"
 
-[[ $# -eq 1 ]] || die "Usage: sandbox ssh <name>"
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+Usage: sandbox ssh <name>
+
+Resolve <name> to the running sandbox's public IP via EC2 tags and exec
+ssh into it as $SSH_USER. The SSH key file (-i $SSH_KEY_FILE) and
+IdentitiesOnly=yes are passed automatically when the file is readable.
+EOF
+        exit 0
+        ;;
+esac
+
+[[ $# -eq 1 ]] || die "Usage: sandbox ssh <name>  (try 'sandbox ssh --help')"
 name="$1"
 
 config_load
