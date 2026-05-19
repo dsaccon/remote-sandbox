@@ -2,6 +2,12 @@
 config
 *.local
 
+# Secrets / credentials — NEVER commit
+.env
+.env.*
+*.pem
+*.key
+
 # AWS CLI cache
 .aws-cache/
 
