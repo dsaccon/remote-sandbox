@@ -26,4 +26,9 @@ if [[ -z "$ip" || "$ip" == "null" ]]; then
     die "no sandbox named $name (or it's not running)"
 fi
 
-exec "$SSH_CMD" "${SSH_USER}@${ip}"
+ssh_args=()
+if [[ -n "${SSH_KEY_FILE:-}" && -r "$SSH_KEY_FILE" ]]; then
+    ssh_args+=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes)
+fi
+
+exec "$SSH_CMD" "${ssh_args[@]}" "${SSH_USER}@${ip}"

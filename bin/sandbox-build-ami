@@ -52,7 +52,10 @@ aws_wait_running "$instance_id"
 ip="$(aws_get_instance_ip "$instance_id")"
 log_info "bake VM IP: $ip"
 
-ssh_opts=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+: "${SSH_KEY_FILE:?build-ami: SSH_KEY_FILE not set (should default in config_load)}"
+[[ -r "$SSH_KEY_FILE" ]] || die "SSH key file not readable: $SSH_KEY_FILE"
+ssh_opts=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes \
+          -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
           -o LogLevel=ERROR -o ConnectTimeout=10)
 
 log_info "waiting for SSH..."

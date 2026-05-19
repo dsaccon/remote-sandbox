@@ -37,6 +37,9 @@ ip="$(awk '/ssh ubuntu@/ {sub("^.*@",""); print; exit}' /tmp/sandbox-up.out)"
 [[ -z "$ip" ]] && { log_err "could not parse IP from sandbox-up output"; exit 1; }
 
 ssh_opts=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
+if [[ -n "${SSH_KEY_FILE:-}" && -r "$SSH_KEY_FILE" ]]; then
+    ssh_opts+=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes)
+fi
 
 log_info "waiting for SSH on $ip..."
 for i in {1..30}; do

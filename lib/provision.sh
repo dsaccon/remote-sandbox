@@ -161,7 +161,10 @@ provision_launch() {
     # Verify SSH actually comes up. On failure, show last 50 lines of EC2
     # console output to help diagnose AMI/sshd issues per the spec.
     : "${SSH_CMD:=ssh}"
-    local ssh_opts=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+    : "${SSH_KEY_FILE:?provision_launch: SSH_KEY_FILE not set (should default in config_load)}"
+    [[ -r "$SSH_KEY_FILE" ]] || die "SSH key file not readable: $SSH_KEY_FILE"
+    local ssh_opts=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes \
+                    -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
                     -o LogLevel=ERROR -o ConnectTimeout=10)
     local i ok=0
     for i in {1..18}; do  # ~90s total

@@ -12,6 +12,8 @@ SPOT_FALLBACK_ON_DEMAND=true
 
 # ---- Identity / access ----
 SSH_KEY_NAME="claude-sandbox"     # an EC2 key pair you've already created
+SSH_KEY_FILE=""                   # path to the matching local private key
+                                  # blank → defaults to ~/.ssh/${SSH_KEY_NAME}.pem
 SSH_USER="ubuntu"
 
 # ---- AMI ----

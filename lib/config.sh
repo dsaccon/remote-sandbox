@@ -18,6 +18,7 @@ _CONFIG_KEYS=(
     USE_SPOT
     SPOT_FALLBACK_ON_DEMAND
     SSH_KEY_NAME
+    SSH_KEY_FILE
     SSH_USER
     AMI_ID
     AUTO_SHUTDOWN_HOURS
@@ -33,6 +34,7 @@ _config_default() {
         USE_SPOT)                 echo "true" ;;
         SPOT_FALLBACK_ON_DEMAND)  echo "true" ;;
         SSH_KEY_NAME)             echo "claude-sandbox" ;;
+        SSH_KEY_FILE)             echo "${HOME}/.ssh/${SSH_KEY_NAME:-claude-sandbox}.pem" ;;
         SSH_USER)                 echo "ubuntu" ;;
         AMI_ID)                   echo "" ;;
         AUTO_SHUTDOWN_HOURS)      echo "8" ;;
