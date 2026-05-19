@@ -61,6 +61,15 @@ sudo npm install -g @anthropic-ai/claude-code
 log "fd alias (Ubuntu names it fdfind)"
 sudo ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
+log "neovim (latest stable from neovim/neovim releases — Ubuntu's apt nvim is too old for LazyVim)"
+# Pin a known-good URL pattern; arch is amd64 only per AMI design.
+nvim_tar=/tmp/nvim-linux-x86_64.tar.gz
+curl -fsSL -o "$nvim_tar" \
+    https://github.com/neovim/neovim/releases/latest/download/nvim-linux-x86_64.tar.gz
+sudo tar -C /opt -xzf "$nvim_tar"
+sudo ln -sf /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
+rm -f "$nvim_tar"
+
 log "systemd auto-shutdown unit"
 sudo install -m 0644 /tmp/auto-shutdown.service /etc/systemd/system/auto-shutdown.service
 sudo install -m 0644 /tmp/auto-shutdown.timer   /etc/systemd/system/auto-shutdown.timer
