@@ -20,16 +20,18 @@ if [[ -n "${ZSH_VERSION:-}" ]]; then
 fi
 
 _sandbox_list_names() {
-    # Query EC2 for sandbox names, excluding bake VMs (tagged BakeRole=bake).
-    # Silent failure → empty output so completion just doesn't enumerate,
-    # rather than erroring.
+    # Query EC2 for sandbox names. Emit two columns (Name, BakeRole) per
+    # instance and filter out bake VMs in awk — JMESPath's `!Tags[?...]`
+    # negation is unreliable. Silent failure → empty output so completion
+    # just doesn't enumerate, rather than erroring.
     local region="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
     aws ec2 describe-instances --region "$region" \
         --filters \
             'Name=tag:Project,Values=claude-sandbox' \
             'Name=instance-state-name,Values=pending,running,stopping,stopped' \
-        --query "Reservations[].Instances[?!Tags[?Key=='BakeRole']].Tags[?Key=='Name'].Value" \
-        --output text 2>/dev/null | tr '\t' '\n'
+        --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value | [0], Tags[?Key==`BakeRole`].Value | [0]]' \
+        --output text 2>/dev/null \
+        | awk '$2 == "None" { print $1 }'
 }
 
 _sandbox_complete() {
