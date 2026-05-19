@@ -24,12 +24,40 @@ See `docs/specs/2026-05-12-remote-sandbox-design.md` for the full design and
 
 ## Setup
 
+One-time, in this order:
+
 ```bash
+# 1. AWS credentials — populate .env from the template.
+cp .env.example .env
+chmod 600 .env
+# Edit .env: paste AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY from the IAM
+# user you created for this project. AWS_DEFAULT_REGION=us-west-2 is fine.
+
+# 2. Project config — region, instance type, key pair name, etc.
 cp config.example config
 # Edit ./config — at minimum verify SSH_KEY_NAME matches the EC2 key pair
 # you created above.
-./bin/sandbox build-ami     # ~10 minutes, one-time (and whenever you want fresh tools)
+
+# 3. Load credentials into your shell (see "Each new terminal" below) and
+#    verify before you go further:
+source ./load-env.sh
+aws sts get-caller-identity   # should print your account / IAM user ARN
+
+# 4. Bake the AMI. ~10 minutes; you'll re-run this whenever you want fresh
+#    tools or apt updates baked into the image.
+./bin/sandbox build-ami
 ```
+
+## Each new terminal
+
+`aws` CLI and `./bin/sandbox` both read credentials from environment variables.
+Before running any command in a freshly-opened terminal:
+
+```bash
+source ./load-env.sh
+```
+
+You'll see `load-env: exported [AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION] from ...`. The script refuses to run if you execute it (`./load-env.sh`) because that would set vars in a subshell that dies immediately — it must be **sourced**.
 
 ## Commands
 
