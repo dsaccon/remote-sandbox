@@ -161,8 +161,14 @@ aws_describe_ubuntu_2404_ami() {
 aws_create_image() {
     local instance_id="$1"
     local name="$2"
+    # NOTE: DO NOT pass --no-reboot. With --no-reboot the snapshot is taken
+    # against a live filesystem whose page cache hasn't been flushed —
+    # recently-written files (like the dotfiles clone, the nvim tarball,
+    # the npm-installed claude binary) end up on the AMI as ZERO-BYTE
+    # files. Letting AWS reboot the instance triggers a clean sync first,
+    # which guarantees consistency. Costs ~30-60s extra per bake.
     _aws ec2 create-image --instance-id "$instance_id" --name "$name" \
-        --no-reboot --query ImageId --output text
+        --query ImageId --output text
 }
 
 aws_wait_image_available() {
