@@ -152,8 +152,8 @@ provision_launch() {
     fi
     rm -f "$err_log"
 
-    log_info "instance $id launched; waiting for status checks (60-90s)..."
-    aws_wait_running "$id"
+    wait_with_progress "instance $id launched; waiting for status checks (60-90s)" \
+        aws_wait_running "$id"
 
     local ip; ip="$(aws_get_instance_ip "$id")"
     [[ "$ip" == "None" || -z "$ip" ]] && die "instance $id has no public IP"

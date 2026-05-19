@@ -92,14 +92,30 @@ aws_run_instances_json() {
     # Read JSON from stdin, invoke run-instances, print resulting instance id
     # to stdout. On failure, emit the AWS error to stderr and return non-zero
     # so the caller can pattern-match (e.g. for InsufficientInstanceCapacity).
-    local json out rc
-    json="$(cat)"
-    if ! out="$(printf '%s' "$json" | _aws ec2 run-instances --cli-input-json file:///dev/stdin --output json 2>&1)"; then
+    #
+    # We write the JSON to a tempfile instead of using `file:///dev/stdin`
+    # because aws CLI v2 rejects /dev/stdin with "Invalid JSON received"
+    # (it appears to mmap/seek the file). Tempfile is bulletproof.
+    local out err_log rc tmpf id
+    tmpf="$(mktemp -t aws-run-instances.XXXXXX)"
+    err_log="$(mktemp -t aws-run-instances-err.XXXXXX)"
+    trap 'rm -f "$tmpf" "$err_log"' RETURN
+    cat > "$tmpf"
+
+    if ! out="$(_aws ec2 run-instances --cli-input-json "file://$tmpf" --output json 2>"$err_log")"; then
         rc=$?
-        printf '%s\n' "$out" >&2
+        cat "$err_log" >&2
         return "$rc"
     fi
-    printf '%s' "$out" | jq -r '.Instances[0].InstanceId'
+
+    id="$(printf '%s' "$out" | jq -r '.Instances[0].InstanceId // ""')"
+    if [[ -z "$id" || "$id" == "null" ]]; then
+        printf 'aws_run_instances_json: success exit but no InstanceId in response\n' >&2
+        printf 'stdout was: %s\n' "$out" >&2
+        printf 'stderr was: %s\n' "$(cat "$err_log")" >&2
+        return 1
+    fi
+    printf '%s' "$id"
 }
 
 aws_wait_running() {

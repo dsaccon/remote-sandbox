@@ -48,7 +48,8 @@ trap '
         echo "  Tear down when done:  ./bin/sandbox down $instance_id"
     fi' EXIT
 
-aws_wait_running "$instance_id"
+wait_with_progress "bake VM $instance_id launched; waiting for status checks (60-90s)" \
+    aws_wait_running "$instance_id"
 ip="$(aws_get_instance_ip "$instance_id")"
 log_info "bake VM IP: $ip"
 
@@ -81,8 +82,8 @@ log_info "running bootstrap (this can take 5-10 minutes)..."
 ami_name="claude-sandbox-$(date -u +%Y%m%dT%H%M%SZ)"
 log_info "creating image $ami_name..."
 new_ami="$(aws_create_image "$instance_id" "$ami_name")"
-log_info "new AMI: $new_ami (waiting for available)..."
-aws_wait_image_available "$new_ami"
+wait_with_progress "new AMI $new_ami (snapshot finalizing — typically 4-10 min)" \
+    aws_wait_image_available "$new_ami"
 
 log_info "writing AMI_ID into ./config"
 config_write_ami_id "$new_ami"
