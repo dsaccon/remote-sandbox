@@ -57,15 +57,21 @@ USE_SPOT_FINAL="${USE_SPOT:-false}"
 
 preflight_or_die
 
-read -r id ip < <(provision_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL")
+read -r id < <(provision_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL")
 
 cat <<EOF
 
-  $NAME ready ($id)
+  $NAME launching ($id)
 
-  ssh ${SSH_USER}@${ip}
+  Returning control now. The instance moves: pending → initializing → ready,
+  typically reaching ready in 60-90s. Track with:
 
-  Once in, run \`claude\` to authenticate this VM.
-  Auto-shutdown in ${AUTO_SHUTDOWN_HOURS}h.
+      ./bin/sandbox list
+
+  Once it shows 'ready', drop in:
+
+      ./bin/sandbox ssh $NAME
+
+  Then run \`claude\` to authenticate this VM. Auto-shutdown in ${AUTO_SHUTDOWN_HOURS}h.
 
 EOF

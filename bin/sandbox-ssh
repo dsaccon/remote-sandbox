@@ -33,12 +33,35 @@ config_load
 aws_caller_identity
 
 json="$(aws_describe_instances_by_tag Name "$name")"
+
+# First check: does ANY instance with this name exist (in any state)?
+state="$(printf '%s' "$json" | jq -r 'first(.Reservations[].Instances[].State.Name) // empty')"
+if [[ -z "$state" ]]; then
+    die "no sandbox named $name in $AWS_REGION (try ./bin/sandbox list)"
+fi
+
+# Distinct error per non-running state so the user knows whether to wait,
+# wake up, or give up.
+case "$state" in
+    pending)
+        die "sandbox $name is still booting (state: pending). Try again in a moment, or check './bin/sandbox list' for status." ;;
+    stopping|stopped)
+        die "sandbox $name is $state. This box was halted (auto-shutdown timer or manual). Up a new one with './bin/sandbox up'." ;;
+    shutting-down|terminated)
+        die "sandbox $name is $state — gone or going. Up a fresh one with './bin/sandbox up'." ;;
+    running)
+        : # fall through to SSH
+        ;;
+    *)
+        die "sandbox $name is in unexpected state '$state'" ;;
+esac
+
 # Limit inside jq (via first()) rather than `| head -n1` to avoid SIGPIPE
 # under `set -o pipefail` if there's more than one running instance.
 ip="$(printf '%s' "$json" | jq -r 'first(.Reservations[].Instances[] | select(.State.Name=="running") | .PublicIpAddress) // empty')"
 
 if [[ -z "$ip" || "$ip" == "null" ]]; then
-    die "no sandbox named $name (or it's not running)"
+    die "sandbox $name is running but has no public IP yet — check './bin/sandbox list'"
 fi
 
 ssh_args=()

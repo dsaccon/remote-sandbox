@@ -118,7 +118,9 @@ build_run_instances_json() {
 EOF
 }
 
-# provision_launch NAME REPO USE_SPOT — prints "<instance-id> <ip>" on success.
+# provision_launch NAME REPO USE_SPOT — issues run-instances and prints the
+# new instance id on stdout. Non-blocking: does NOT wait for status checks
+# or SSH readiness. Use `sandbox list` to track state.
 provision_launch() {
     local name="$1"
     local repo="$2"
@@ -152,34 +154,7 @@ provision_launch() {
     fi
     rm -f "$err_log"
 
-    wait_with_progress "instance $id launched; waiting for status checks (60-90s)" \
-        aws_wait_running "$id"
-
-    local ip; ip="$(aws_get_instance_ip "$id")"
-    [[ "$ip" == "None" || -z "$ip" ]] && die "instance $id has no public IP"
-
-    # Verify SSH actually comes up. On failure, show last 50 lines of EC2
-    # console output to help diagnose AMI/sshd issues per the spec.
-    : "${SSH_CMD:=ssh}"
-    : "${SSH_KEY_FILE:?provision_launch: SSH_KEY_FILE not set (should default in config_load)}"
-    [[ -r "$SSH_KEY_FILE" ]] || die "SSH key file not readable: $SSH_KEY_FILE"
-    local ssh_opts=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes \
-                    -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
-                    -o LogLevel=ERROR -o ConnectTimeout=10)
-    local i ok=0
-    for i in {1..18}; do  # ~90s total
-        if "$SSH_CMD" "${ssh_opts[@]}" "${SSH_USER}@${ip}" true 2>/dev/null; then
-            ok=1; break
-        fi
-        sleep 5
-    done
-    if [[ "$ok" -ne 1 ]]; then
-        log_err "SSH never came up on $ip; last 50 lines of console output:"
-        aws_get_console_output "$id" | tail -n 50 >&2
-        die "instance $id reachable on network but SSH not responding"
-    fi
-
-    printf '%s %s\n' "$id" "$ip"
+    printf '%s\n' "$id"
 }
 
 # Internal: actually invoke run-instances; returns the instance id or

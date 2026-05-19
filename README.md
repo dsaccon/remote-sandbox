@@ -61,6 +61,8 @@ You'll see `load-env: exported [AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFA
 
 ### Optional: tab completion
 
+Source the completion file in the same terminal you'll use the CLI from:
+
 ```bash
 source ./completion/sandbox.sh
 ```
@@ -77,13 +79,7 @@ Enables tab completion for the dispatcher in bash and zsh:
 
 The name suggestions query EC2 each Tab press (~200-500ms latency). Bake VMs
 (`sandbox-bake-...`) are filtered out — only your real sandboxes appear.
-
-Add it to your `~/.zshrc` / `~/.bashrc` if you want completion every session
-without sourcing manually:
-
-```bash
-source /full/path/to/remote-sandbox/completion/sandbox.sh
-```
+Re-source this file after pulling updates that touch `completion/sandbox.sh`.
 
 ## Commands
 
@@ -91,13 +87,13 @@ Run `./bin/sandbox --help` for the full list, or `./bin/sandbox <cmd> --help`
 for details on any subcommand.
 
 ```bash
-./bin/sandbox up                       # spin up a fresh box (spot)
+./bin/sandbox up                       # spin up a fresh box (spot) — non-blocking
 ./bin/sandbox up --repo URL            #   ...and clone a repo into it
 ./bin/sandbox up --no-spot             # avoid spot (e.g. long unattended tests)
 ./bin/sandbox up --instance-type t3.large
 ./bin/sandbox up --name myproject      # custom name
 
-./bin/sandbox list                     # what's running?
+./bin/sandbox list                     # what's running? (see STATE values below)
 ./bin/sandbox ssh <name>               # SSH into a box
 
 ./bin/sandbox down <name>              # terminate one
@@ -106,6 +102,39 @@ for details on any subcommand.
 
 ./bin/sandbox build-ami                # bake a fresh AMI
 ```
+
+### Sandbox lifecycle
+
+`./bin/sandbox up` returns control as soon as AWS accepts the launch request
+(typically <2s). The instance moves through these STATE values, visible in
+`./bin/sandbox list`:
+
+| STATE | Meaning |
+|---|---|
+| `pending` | EC2 has accepted the launch, instance is booting; no public IP yet |
+| `initializing` | Instance is `running` but EC2 status checks haven't passed yet (typically 60-90s in this state) |
+| `ready` | Both EC2 status checks passed — SSH should accept connections |
+| `impaired` | A status check failed; instance is in trouble. Inspect with `aws ec2 get-console-output --instance-id ...` |
+| `running` | Running, but status checks returned a non-standard value (`insufficient-data`/`not-applicable`) — rare |
+| `stopping` / `stopped` | Halted (often by the in-VM auto-shutdown timer). For ephemeral use, treat as gone. |
+| `shutting-down` / `terminated` | Killed (manually via `down`, by spot reclaim, or by `shutdown -h` on a `DeleteOnTermination=true` volume). |
+
+Typical sequence after `./bin/sandbox up`:
+
+```bash
+$ ./bin/sandbox list
+NAME                   STATE          TYPE               AGE        IP
+sandbox-26bdd2af       pending        m7i-flex.xlarge    5s         -
+# ...20s later...
+sandbox-26bdd2af       initializing   m7i-flex.xlarge    25s        54.218.x.x
+# ...60s later...
+sandbox-26bdd2af       ready          m7i-flex.xlarge    85s        54.218.x.x
+
+$ ./bin/sandbox ssh sandbox-26bdd2af
+```
+
+`./bin/sandbox ssh` against a non-`ready` instance now gives a useful error
+("still booting", "stopped", etc.) instead of "no sandbox named X".
 
 ## Once you're SSHed in
 

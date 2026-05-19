@@ -26,6 +26,28 @@ esac
 config_load
 aws_caller_identity
 
+# Returns the display STATE for a sandbox combining AWS state + status checks.
+# Values: pending | initializing | ready | impaired | running | stopping |
+#         stopped | shutting-down | terminated
+compute_display_state() {
+    local state="$1" inst_status="$2" sys_status="$3"
+    if [[ "$state" != "running" ]]; then
+        printf '%s' "$state"
+        return
+    fi
+    if [[ "$inst_status" == "ok" && "$sys_status" == "ok" ]]; then
+        printf '%s' "ready"
+    elif [[ "$inst_status" == "impaired" || "$sys_status" == "impaired" ]]; then
+        printf '%s' "impaired"
+    elif [[ "$inst_status" == "initializing" || "$sys_status" == "initializing" || -z "$inst_status" || -z "$sys_status" ]]; then
+        printf '%s' "initializing"
+    else
+        # All checks present and neither ok nor initializing nor impaired
+        # (e.g. insufficient-data, not-applicable) — fall back to plain "running".
+        printf '%s' "running"
+    fi
+}
+
 json="$(aws_describe_instances_by_tag Project claude-sandbox)"
 count="$(printf '%s' "$json" | jq '[.Reservations[].Instances[]] | length')"
 if [[ "$count" -eq 0 ]]; then
@@ -33,20 +55,37 @@ if [[ "$count" -eq 0 ]]; then
     exit 0
 fi
 
-# Header.
-printf '%-22s %-10s %-18s %-10s %-16s\n' NAME STATE TYPE AGE IP
+# Get instance-status for every running instance in one batch call.
+running_ids=()
+while IFS= read -r rid; do
+    [[ -z "$rid" ]] && continue
+    running_ids+=("$rid")
+done < <(printf '%s' "$json" | jq -r '.Reservations[].Instances[] | select(.State.Name=="running") | .InstanceId')
+
+if [[ ${#running_ids[@]} -gt 0 ]]; then
+    status_json="$(aws_describe_instance_status_for "${running_ids[@]}")"
+else
+    status_json='{"InstanceStatuses":[]}'
+fi
+
+# Header — STATE column widened to 14 to fit "initializing" / "shutting-down".
+printf '%-22s %-14s %-18s %-10s %-16s\n' NAME STATE TYPE AGE IP
 
 now_epoch="$(date -u +%s)"
-printf '%s' "$json" | jq -r '
+# Join instance data with status data in jq; emit one TSV row per instance.
+printf '%s' "$json" | jq -r --argjson statuses "$status_json" '
+    ($statuses.InstanceStatuses // [] | INDEX(.InstanceId)) as $sm |
     .Reservations[].Instances[] |
     [
         ((.Tags // []) | map(select(.Key=="Name")) | .[0].Value // .InstanceId),
         .State.Name,
         .InstanceType,
         .LaunchTime,
-        (.PublicIpAddress // "-")
+        (.PublicIpAddress // "-"),
+        ($sm[.InstanceId].InstanceStatus.Status // ""),
+        ($sm[.InstanceId].SystemStatus.Status // "")
     ] | @tsv
-' | while IFS=$'\t' read -r name state type launch ip; do
+' | while IFS=$'\t' read -r name state type launch ip inst_status sys_status; do
     launch_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "${launch%.*}" "+%s" 2>/dev/null \
         || date -u -d "$launch" "+%s" 2>/dev/null || echo "$now_epoch")"
     age_sec=$(( now_epoch - launch_epoch ))
@@ -55,5 +94,6 @@ printf '%s' "$json" | jq -r '
     else
         age="$(( age_sec / 3600 ))h$(( (age_sec % 3600) / 60 ))m"
     fi
-    printf '%-22s %-10s %-18s %-10s %-16s\n' "$name" "$state" "$type" "$age" "$ip"
+    display_state="$(compute_display_state "$state" "$inst_status" "$sys_status")"
+    printf '%-22s %-14s %-18s %-10s %-16s\n' "$name" "$display_state" "$type" "$age" "$ip"
 done

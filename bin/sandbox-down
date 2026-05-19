@@ -63,7 +63,7 @@ case "$mode" in
             log_info "no sandboxes to terminate"
             exit 0
         fi
-        log_info "terminating: ${ids[*]}"
+        log_info "shutting down: ${ids[*]} — track via './bin/sandbox list'"
         aws_terminate_instances "${ids[@]}" >/dev/null
         ;;
     --stale)
@@ -91,7 +91,7 @@ case "$mode" in
             log_info "no stale sandboxes"
             exit 0
         fi
-        log_info "terminating stale: ${ids[*]}"
+        log_info "shutting down stale: ${ids[*]} — track via './bin/sandbox list'"
         aws_terminate_instances "${ids[@]}" >/dev/null
         ;;
     --help|-h)
@@ -118,7 +118,7 @@ case "$mode" in
                 die "no sandbox named $target"
             fi
         fi
-        log_info "terminating $target ($id)"
+        log_info "shutting down $target ($id) — track via './bin/sandbox list'"
         aws_terminate_instances "$id" >/dev/null
         ;;
 esac

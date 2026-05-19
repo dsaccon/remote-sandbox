@@ -147,6 +147,18 @@ aws_get_instance_ip() {
         --query 'Reservations[0].Instances[0].PublicIpAddress' --output text
 }
 
+# aws_describe_instance_status_for ID [ID ...] — describe-instance-status for
+# the given instance IDs. Use to get InstanceStatus.Status / SystemStatus.Status
+# (ok / impaired / initializing / insufficient-data). Returns JSON.
+# Empty arg list → empty JSON envelope so callers can pipe to jq unconditionally.
+aws_describe_instance_status_for() {
+    if [[ $# -eq 0 ]]; then
+        printf '%s' '{"InstanceStatuses":[]}'
+        return 0
+    fi
+    _aws ec2 describe-instance-status --instance-ids "$@" --output json
+}
+
 # Latest Canonical Ubuntu 24.04 LTS amd64 AMI in current region.
 aws_describe_ubuntu_2404_ami() {
     _aws ec2 describe-images \

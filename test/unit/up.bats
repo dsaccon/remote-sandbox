@@ -64,38 +64,34 @@ set_fixture() {
     { echo "$rc"; printf '%s' "$*"; } > "$AWS_FAKE_FIXTURES/$n"
 }
 
-@test "up happy path on spot prints ssh command" {
+@test "up happy path on spot prints instance id and is non-blocking" {
     write_aws_fake
-    # Order of calls inside provision_launch:
+    # With up now non-blocking, calls stop after run-instances:
     #   1: sts get-caller-identity
     #   2: describe-images
     #   3: describe-key-pairs
     #   4: describe-security-groups (ensure_sg)
     #   5: describe-security-groups (set ingress: list existing rules)
-    #   6: revoke-security-group-ingress  (skipped if no existing 22/tcp rules — see fixture 5)
-    #   7: authorize-security-group-ingress
-    #   8: run-instances  (spot)
-    #   9: wait instance-status-ok
-    #  10: describe-instances (get IP)
-    #  11: create-tags
+    #   6: authorize-security-group-ingress (no existing rules to revoke)
+    #   7: run-instances (spot) → InstanceId
     set_fixture 1 0 '{"Arn":"x"}'
     set_fixture 2 0 '{"Images":[{"ImageId":"ami-abc"}]}'
     set_fixture 3 0 '{"KeyPairs":[{"KeyName":"claude-sandbox"}]}'
     set_fixture 4 0 'sg-123'
     set_fixture 5 0 '{"SecurityGroups":[{"IpPermissions":[]}]}'
-    # 6 not called (no existing rules to revoke)
     set_fixture 6 0 ''  # authorize
     set_fixture 7 0 '{"Instances":[{"InstanceId":"i-xyz"}]}'
-    set_fixture 8 0 ''  # wait
-    set_fixture 9 0 '5.6.7.8'
-    set_fixture 10 0 ''  # create-tags
 
     run "$SANDBOX_REPO_ROOT/bin/sandbox-up"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"ssh ubuntu@5.6.7.8"* ]]
+    [[ "$output" == *"i-xyz"* ]]
+    [[ "$output" == *"launching"* ]]
+    # No more SSH command in the output — that comes via sandbox list/ssh.
+    [[ "$output" != *"ssh ubuntu@"* ]]
     grep -q -- 'run-instances' "$AWS_STUB_LOG"
-    # Confirm spot was requested.
     grep -q -- '--cli-input-json' "$AWS_STUB_LOG"
+    # No wait-status-ok or describe-instances for IP should have been made.
+    ! grep -q -- 'ec2 wait instance-status-ok' "$AWS_STUB_LOG"
 }
 
 @test "up falls back to on-demand on InsufficientInstanceCapacity" {
@@ -110,14 +106,11 @@ set_fixture() {
     set_fixture 7 255 'An error occurred (InsufficientInstanceCapacity) when calling the RunInstances operation'
     # 8: on-demand retry succeeds
     set_fixture 8 0 '{"Instances":[{"InstanceId":"i-xyz"}]}'
-    set_fixture 9 0 ''
-    set_fixture 10 0 '5.6.7.8'
-    set_fixture 11 0 ''
 
     run "$SANDBOX_REPO_ROOT/bin/sandbox-up"
     [ "$status" -eq 0 ]
     [[ "$output" == *"spot unavailable"* ]] || [[ "$output" == *"falling back to on-demand"* ]]
-    [[ "$output" == *"ssh ubuntu@5.6.7.8"* ]]
+    [[ "$output" == *"i-xyz"* ]]
 }
 
 @test "up with --no-spot skips spot, goes straight to on-demand" {
@@ -129,13 +122,9 @@ set_fixture() {
     set_fixture 5 0 '{"SecurityGroups":[{"IpPermissions":[]}]}'
     set_fixture 6 0 ''
     set_fixture 7 0 '{"Instances":[{"InstanceId":"i-xyz"}]}'
-    set_fixture 8 0 ''
-    set_fixture 9 0 '5.6.7.8'
-    set_fixture 10 0 ''
 
     run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --no-spot
     [ "$status" -eq 0 ]
-    [[ "$output" == *"ssh ubuntu@5.6.7.8"* ]]
-    # run-instances JSON should NOT contain InstanceMarketOptions when --no-spot
+    [[ "$output" == *"i-xyz"* ]]
     grep -q -- 'run-instances' "$AWS_STUB_LOG"
 }
