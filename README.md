@@ -59,6 +59,32 @@ source ./load-env.sh
 
 You'll see `load-env: exported [AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION] from ...`. The script refuses to run if you execute it (`./load-env.sh`) because that would set vars in a subshell that dies immediately — it must be **sourced**.
 
+### Optional: tab completion
+
+```bash
+source ./completion/sandbox.sh
+```
+
+Enables tab completion for the dispatcher in bash and zsh:
+
+```
+./bin/sandbox <TAB>             # → up | down | list | ssh | build-ami | --help
+./bin/sandbox up <TAB>          # → --repo --name --instance-type --no-spot --help
+./bin/sandbox ssh <TAB>         # → live list of your running sandbox names
+./bin/sandbox down <TAB>        # → live names + --all + --stale
+./bin/sandbox down --stale <TAB># → 30m | 1h | 4h | 12h | 24h | 48h | 7d
+```
+
+The name suggestions query EC2 each Tab press (~200-500ms latency). Bake VMs
+(`sandbox-bake-...`) are filtered out — only your real sandboxes appear.
+
+Add it to your `~/.zshrc` / `~/.bashrc` if you want completion every session
+without sourcing manually:
+
+```bash
+source /full/path/to/remote-sandbox/completion/sandbox.sh
+```
+
 ## Commands
 
 Run `./bin/sandbox --help` for the full list, or `./bin/sandbox <cmd> --help`
