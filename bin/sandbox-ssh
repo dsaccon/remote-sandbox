@@ -20,7 +20,9 @@ config_load
 aws_caller_identity
 
 json="$(aws_describe_instances_by_tag Name "$name")"
-ip="$(printf '%s' "$json" | jq -r '.Reservations[].Instances[] | select(.State.Name=="running") | .PublicIpAddress' | head -n1)"
+# Limit inside jq (via first()) rather than `| head -n1` to avoid SIGPIPE
+# under `set -o pipefail` if there's more than one running instance.
+ip="$(printf '%s' "$json" | jq -r 'first(.Reservations[].Instances[] | select(.State.Name=="running") | .PublicIpAddress) // empty')"
 
 if [[ -z "$ip" || "$ip" == "null" ]]; then
     die "no sandbox named $name (or it's not running)"

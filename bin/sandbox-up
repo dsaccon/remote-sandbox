@@ -35,9 +35,11 @@ done
 
 config_load
 
-# Default name = sandbox-<8 hex chars>
+# Default name = sandbox-<8 hex chars>. Use openssl rather than
+# `tr ... </dev/urandom | head -c8` because under `set -o pipefail` head
+# closing stdin SIGPIPEs tr → whole pipeline exits 141 → silent script death.
 if [[ -z "$NAME" ]]; then
-    NAME="sandbox-$(LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c8)"
+    NAME="sandbox-$(openssl rand -hex 4)"
 fi
 
 USE_SPOT_FINAL="${USE_SPOT:-false}"

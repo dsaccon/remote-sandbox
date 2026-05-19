@@ -21,7 +21,7 @@ if [[ -z "${AMI_ID:-}" ]]; then
     config_load
 fi
 
-NAME="smoke-$(LC_ALL=C tr -dc 'a-f0-9' </dev/urandom | head -c6)"
+NAME="smoke-$(openssl rand -hex 3)"
 
 cleanup() {
     log_info "smoke cleanup: terminating $NAME"

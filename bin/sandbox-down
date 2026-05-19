@@ -99,10 +99,15 @@ case "$mode" in
             id="$target"
         else
             json="$(aws_describe_instances_by_tag Project claude-sandbox)"
+            # Limit inside jq (via first()) instead of piping to `head -n1`,
+            # which can SIGPIPE jq under `set -o pipefail` if more than one
+            # instance matches.
             id="$(printf '%s' "$json" | jq -r --arg n "$target" '
-                .Reservations[].Instances[] |
-                select((.Tags // []) | any(.Key=="Name" and .Value==$n)) |
-                .InstanceId' | head -n1)"
+                first(
+                    .Reservations[].Instances[] |
+                    select((.Tags // []) | any(.Key=="Name" and .Value==$n)) |
+                    .InstanceId
+                ) // empty')"
             if [[ -z "$id" ]]; then
                 die "no sandbox named $target"
             fi
