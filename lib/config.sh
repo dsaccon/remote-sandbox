@@ -38,7 +38,7 @@ _config_default() {
         SSH_KEY_FILE)             echo "${HOME}/.ssh/${SSH_KEY_NAME:-claude-sandbox}.pem" ;;
         SSH_USER)                 echo "ubuntu" ;;
         AMI_ID)                   echo "" ;;
-        AUTO_SHUTDOWN_HOURS)      echo "8" ;;
+        AUTO_SHUTDOWN_HOURS)      echo "0" ;;
         DOTFILES_REPO)            echo "" ;;
         SSH_INGRESS_CIDR)         echo "" ;;
         *)                        echo "" ;;

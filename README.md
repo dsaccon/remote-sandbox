@@ -180,8 +180,9 @@ The OAuth token lives on this VM only, and dies when you `down` the box.
 ## Cost
 
 Expected ~$10-15/month at a few 1-3h sessions/day on spot. The systemd
-auto-shutdown timer terminates the box after `AUTO_SHUTDOWN_HOURS`
-(default 8) of uptime even if you forget to `down` it.
+auto-shutdown timer is opt-in: set `AUTO_SHUTDOWN_HOURS` in `./config`
+to a positive number and the box terminates after that many hours of
+uptime even if you forget to `down` it. Default is `0` (disabled).
 
 ## Development
 

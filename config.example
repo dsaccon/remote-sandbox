@@ -31,7 +31,12 @@ SSH_INGRESS_CIDR=""
 AMI_ID=""
 
 # ---- Lifecycle guardrails ----
-AUTO_SHUTDOWN_HOURS=8             # 0 disables the in-VM shutdown timer
+# In-VM uptime timer. When the box reaches AUTO_SHUTDOWN_HOURS of uptime
+# it runs `shutdown -h`, which (with InstanceInitiatedShutdownBehavior=
+# terminate) terminates the instance and deletes its EBS volume —
+# everything on the box is gone. The timer is uptime-based, not idle-
+# based, so active use doesn't reset it. 0 disables it.
+AUTO_SHUTDOWN_HOURS=0
 
 # ---- Optional: dotfiles cloned to ~ during AMI bake ----
 DOTFILES_REPO=""                  # e.g. "https://github.com/dsaccon/dotfiles.git"

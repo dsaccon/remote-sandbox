@@ -123,7 +123,8 @@ build_run_instances_json() {
       {"Key":"Project","Value":"claude-sandbox"},
       {"Key":"Name","Value":"$name"},
       {"Key":"CreatedAt","Value":"$iso"},
-      {"Key":"Owner","Value":"$owner_tag"}
+      {"Key":"Owner","Value":"$owner_tag"},
+      {"Key":"AutoShutdownHours","Value":"${AUTO_SHUTDOWN_HOURS:-0}"}
     ]},
     {"ResourceType":"volume","Tags":[
       {"Key":"Project","Value":"claude-sandbox"},

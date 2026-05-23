@@ -18,9 +18,13 @@ case "${1:-}" in
 Usage: sandbox list [--active]
 
 List every sandbox (instances tagged Project=claude-sandbox) in the
-configured region, with columns: NAME, STATE, TYPE, AGE, IP, ALLOWED.
-ALLOWED is the CIDR the sandbox's SG lets in on :22 (whoever can SSH);
-"-" if no rule found.
+configured region, with columns: NAME, STATE, TYPE, AGE, EXPIRES, IP,
+ALLOWED.
+
+  EXPIRES  Time until the in-VM auto-shutdown timer terminates the box.
+           "off" if AUTO_SHUTDOWN_HOURS=0 at launch, "-" if launched
+           before this tag existed.
+  ALLOWED  CIDR the sandbox's SG lets in on :22; "-" if no rule found.
 
   --active   Only show ready sandboxes (running + status checks passed).
              Hides pending/initializing/stopped/terminated.
@@ -101,7 +105,7 @@ else
 fi
 
 # Header — STATE column widened to 14 to fit "initializing" / "shutting-down".
-printf '%-22s %-14s %-18s %-10s %-16s %-18s\n' NAME STATE TYPE AGE IP ALLOWED
+printf '%-22s %-14s %-18s %-10s %-8s %-16s %-18s\n' NAME STATE TYPE AGE EXPIRES IP ALLOWED
 
 now_epoch="$(date -u +%s)"
 # Join instance data with status data + SG ingress in jq. ALLOWED shows the
@@ -122,9 +126,10 @@ printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg
             .SecurityGroups[]?.GroupId
             | $sgm[.]?
             | (.IpPermissions[]? | select(.IpProtocol=="tcp" and .FromPort==22) | .IpRanges[]?.CidrIp)
-        ] | .[0] // "-")
+        ] | .[0] // "-"),
+        ((.Tags // []) | map(select(.Key=="AutoShutdownHours")) | .[0].Value // "-")
     ] | @tsv
-' | while IFS=$'\t' read -r name state type launch ip inst_status sys_status cidr; do
+' | while IFS=$'\t' read -r name state type launch ip inst_status sys_status cidr shutdown_hours; do
     # `read -r` with IFS=$'\t' treats runs of tabs as one separator (tab is
     # an IFS-whitespace char), so when both status fields are empty the
     # cidr column gets eaten. jq emits "-" placeholders to keep field
@@ -143,5 +148,25 @@ printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg
     if [[ "$only_active" -eq 1 && "$display_state" != "ready" ]]; then
         continue
     fi
-    printf '%-22s %-14s %-18s %-10s %-16s %-18s\n' "$name" "$display_state" "$type" "$age" "$ip" "$cidr"
+
+    # EXPIRES: time until the in-VM auto-shutdown timer would terminate the
+    # box. Computed from AutoShutdownHours tag + uptime. Negative means the
+    # timer is past due (typically <5 min lag from the systemd timer).
+    case "$shutdown_hours" in
+        ""|"-"|"None")  expires="-" ;;
+        "0")            expires="off" ;;
+        *)
+            threshold_sec=$(( shutdown_hours * 3600 ))
+            remaining_sec=$(( threshold_sec - age_sec ))
+            if (( remaining_sec <= 0 )); then
+                expires="due"
+            elif (( remaining_sec < 3600 )); then
+                expires="$(( remaining_sec / 60 ))m"
+            else
+                expires="$(( remaining_sec / 3600 ))h$(( (remaining_sec % 3600) / 60 ))m"
+            fi
+            ;;
+    esac
+    printf '%-22s %-14s %-18s %-10s %-8s %-16s %-18s\n' \
+        "$name" "$display_state" "$type" "$age" "$expires" "$ip" "$cidr"
 done

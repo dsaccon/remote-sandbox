@@ -69,6 +69,12 @@ ssh_cidr="$(resolve_ssh_cidr "$SSH_CIDR_FLAG")"
 
 read -r id < <(provision_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL" "$ssh_cidr")
 
+if [[ "${AUTO_SHUTDOWN_HOURS:-0}" -gt 0 ]]; then
+    shutdown_note="Auto-shutdown in ${AUTO_SHUTDOWN_HOURS}h."
+else
+    shutdown_note="Auto-shutdown disabled — terminate with \`./bin/sandbox down $NAME\`."
+fi
+
 cat <<EOF
 
   $NAME launching ($id)
@@ -82,6 +88,6 @@ cat <<EOF
 
       ./bin/sandbox ssh $NAME
 
-  Then run \`claude\` to authenticate this VM. Auto-shutdown in ${AUTO_SHUTDOWN_HOURS}h.
+  Then run \`claude\` to authenticate this VM. $shutdown_note
 
 EOF
