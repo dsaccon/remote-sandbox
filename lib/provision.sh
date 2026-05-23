@@ -52,6 +52,22 @@ current_public_ip_cidr() {
     printf '%s/32' "$ip"
 }
 
+# resolve_ssh_cidr [override] — pick the SG :22 ingress CIDR for a new sandbox.
+# Precedence:  $1 (--ssh-cidr flag value) > $SSH_INGRESS_CIDR config > auto-detect.
+# Auto-detect uses current_public_ip_cidr which fetches over HTTPS — that egress
+# IP is wrong for users whose SSH traffic exits via a different path (split
+# tunnel, VPN, etc.); they should set SSH_INGRESS_CIDR explicitly.
+resolve_ssh_cidr() {
+    local override="${1:-}"
+    if [[ -n "$override" ]]; then
+        printf '%s' "$override"
+    elif [[ -n "${SSH_INGRESS_CIDR:-}" ]]; then
+        printf '%s' "$SSH_INGRESS_CIDR"
+    else
+        current_public_ip_cidr
+    fi
+}
+
 preflight_or_die() {
     : "${AWS_REGION:?preflight: AWS_REGION not set}"
     : "${SSH_KEY_NAME:?preflight: SSH_KEY_NAME not set}"
@@ -118,18 +134,19 @@ build_run_instances_json() {
 EOF
 }
 
-# provision_launch NAME REPO USE_SPOT — issues run-instances and prints the
-# new instance id on stdout. Non-blocking: does NOT wait for status checks
-# or SSH readiness. Use `sandbox list` to track state.
+# provision_launch NAME REPO USE_SPOT CIDR — issues run-instances and prints
+# the new instance id on stdout. Non-blocking: does NOT wait for status
+# checks or SSH readiness. Use `sandbox list` to track state.
+#
+# CIDR is the :22 ingress for the per-sandbox SG that gets created here.
 provision_launch() {
     local name="$1"
     local repo="$2"
     local use_spot="$3"
+    local cidr="$4"
 
-    local cidr; cidr="$(current_public_ip_cidr)"
-    local sg_id; sg_id="$(ensure_sg)"
-    log_info "security group: $sg_id; SSH ingress = $cidr"
-    aws_set_sg_ingress_to "$sg_id" "$cidr"
+    local sg_id; sg_id="$(aws_create_per_sandbox_sg "$name" "$cidr")"
+    log_info "security group: $sg_id ($name-sg); SSH ingress = $cidr"
 
     local user_data; user_data="$(render_cloud_init "$name" "$repo" "${AUTO_SHUTDOWN_HOURS:-0}")"
     local user_data_b64; user_data_b64="$(printf '%s' "$user_data" | base64 | tr -d '\n')"

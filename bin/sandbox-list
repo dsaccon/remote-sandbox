@@ -18,7 +18,9 @@ case "${1:-}" in
 Usage: sandbox list [--active]
 
 List every sandbox (instances tagged Project=claude-sandbox) in the
-configured region, with columns: NAME, STATE, TYPE, AGE, IP.
+configured region, with columns: NAME, STATE, TYPE, AGE, IP, ALLOWED.
+ALLOWED is the CIDR the sandbox's SG lets in on :22 (whoever can SSH);
+"-" if no rule found.
 
   --active   Only show ready sandboxes (running + status checks passed).
              Hides pending/initializing/stopped/terminated.
@@ -84,13 +86,29 @@ else
     status_json='{"InstanceStatuses":[]}'
 fi
 
+# Collect every SG ID across all instances so we can batch-fetch ingress
+# rules in one call and look them up per-instance in jq below.
+sg_ids=()
+while IFS= read -r sg; do
+    [[ -z "$sg" ]] && continue
+    sg_ids+=("$sg")
+done < <(printf '%s' "$json" | jq -r '[.Reservations[].Instances[].SecurityGroups[]?.GroupId] | unique[]')
+
+if [[ ${#sg_ids[@]} -gt 0 ]]; then
+    sg_json="$(aws_describe_sgs_by_ids "${sg_ids[@]}")"
+else
+    sg_json='{"SecurityGroups":[]}'
+fi
+
 # Header — STATE column widened to 14 to fit "initializing" / "shutting-down".
-printf '%-22s %-14s %-18s %-10s %-16s\n' NAME STATE TYPE AGE IP
+printf '%-22s %-14s %-18s %-10s %-16s %-18s\n' NAME STATE TYPE AGE IP ALLOWED
 
 now_epoch="$(date -u +%s)"
-# Join instance data with status data in jq; emit one TSV row per instance.
-printf '%s' "$json" | jq -r --argjson statuses "$status_json" '
+# Join instance data with status data + SG ingress in jq. ALLOWED shows the
+# first :22 CIDR found across the instance's SGs; "-" if none configured.
+printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg_json" '
     ($statuses.InstanceStatuses // [] | INDEX(.InstanceId)) as $sm |
+    ($sgs.SecurityGroups // [] | INDEX(.GroupId)) as $sgm |
     .Reservations[].Instances[] |
     [
         ((.Tags // []) | map(select(.Key=="Name")) | .[0].Value // .InstanceId),
@@ -98,10 +116,21 @@ printf '%s' "$json" | jq -r --argjson statuses "$status_json" '
         .InstanceType,
         .LaunchTime,
         (.PublicIpAddress // "-"),
-        ($sm[.InstanceId].InstanceStatus.Status // ""),
-        ($sm[.InstanceId].SystemStatus.Status // "")
+        ($sm[.InstanceId].InstanceStatus.Status // "-"),
+        ($sm[.InstanceId].SystemStatus.Status // "-"),
+        ([
+            .SecurityGroups[]?.GroupId
+            | $sgm[.]?
+            | (.IpPermissions[]? | select(.IpProtocol=="tcp" and .FromPort==22) | .IpRanges[]?.CidrIp)
+        ] | .[0] // "-")
     ] | @tsv
-' | while IFS=$'\t' read -r name state type launch ip inst_status sys_status; do
+' | while IFS=$'\t' read -r name state type launch ip inst_status sys_status cidr; do
+    # `read -r` with IFS=$'\t' treats runs of tabs as one separator (tab is
+    # an IFS-whitespace char), so when both status fields are empty the
+    # cidr column gets eaten. jq emits "-" placeholders to keep field
+    # positions stable; translate back to "" here for compute_display_state.
+    [[ "$inst_status" == "-" ]] && inst_status=""
+    [[ "$sys_status" == "-" ]] && sys_status=""
     launch_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "${launch%.*}" "+%s" 2>/dev/null \
         || date -u -d "$launch" "+%s" 2>/dev/null || echo "$now_epoch")"
     age_sec=$(( now_epoch - launch_epoch ))
@@ -114,5 +143,5 @@ printf '%s' "$json" | jq -r --argjson statuses "$status_json" '
     if [[ "$only_active" -eq 1 && "$display_state" != "ready" ]]; then
         continue
     fi
-    printf '%-22s %-14s %-18s %-10s %-16s\n' "$name" "$display_state" "$type" "$age" "$ip"
+    printf '%-22s %-14s %-18s %-10s %-16s %-18s\n' "$name" "$display_state" "$type" "$age" "$ip" "$cidr"
 done

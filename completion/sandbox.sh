@@ -56,10 +56,10 @@ _sandbox_complete() {
 
     case "$subcmd" in
         up)
-            # Static flag list. --instance-type / --repo / --name take values,
-            # but we don't try to enumerate those.
+            # Static flag list. Value-taking flags (--instance-type / --repo /
+            # --name / --ssh-cidr) aren't enumerated.
             # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "--repo --name --instance-type --no-spot --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--repo --name --instance-type --no-spot --ssh-cidr --help" -- "$cur") )
             ;;
 
         down)

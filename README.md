@@ -116,6 +116,8 @@ for details on any subcommand.
 ./bin/sandbox up --no-spot             # avoid spot (e.g. long unattended tests)
 ./bin/sandbox up --instance-type t3.large
 ./bin/sandbox up --name myproject      # custom name
+./bin/sandbox up --ssh-cidr 1.2.3.4/32 # override the SSH ingress CIDR for this sandbox
+./bin/sandbox up --ssh-cidr 0.0.0.0/0  # ...or leave SSH open to the world
 
 ./bin/sandbox list                     # what's running? (see STATE values below)
 ./bin/sandbox list --active            #   ...just the ready ones (terse output)

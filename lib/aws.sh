@@ -67,6 +67,47 @@ aws_create_sg() {
         --vpc-id "$vpc_id" --query GroupId --output text
 }
 
+# aws_create_per_sandbox_sg NAME CIDR — create a per-sandbox SG with :22 ingress
+# from CIDR, tagged Project=claude-sandbox + SandboxName=NAME so it can be
+# found and cleaned up later. Returns the new SG ID on stdout.
+aws_create_per_sandbox_sg() {
+    local sb_name="$1" cidr="$2"
+    local sg_name="${sb_name}-sg"
+    local vpc_id
+    vpc_id="$(_aws ec2 describe-vpcs --filters Name=isDefault,Values=true \
+        --query 'Vpcs[0].VpcId' --output text)"
+    [[ -z "$vpc_id" || "$vpc_id" == "None" ]] && die "no default VPC in $AWS_REGION"
+    local sg_id
+    sg_id="$(_aws ec2 create-security-group --group-name "$sg_name" \
+        --description "claude-sandbox $sb_name SSH ingress (managed by remote-sandbox)" \
+        --vpc-id "$vpc_id" \
+        --tag-specifications "ResourceType=security-group,Tags=[{Key=Project,Value=claude-sandbox},{Key=SandboxName,Value=$sb_name}]" \
+        --query GroupId --output text)"
+    _aws ec2 authorize-security-group-ingress --group-id "$sg_id" \
+        --protocol tcp --port 22 --cidr "$cidr" >/dev/null
+    printf '%s' "$sg_id"
+}
+
+# aws_delete_sg SG_ID — try to delete an SG. Returns 0 on success, non-zero
+# on failure (most commonly because the SG is still in use by an ENI that
+# hasn't fully detached yet). Silent on success; the caller decides how to
+# log failures.
+aws_delete_sg() {
+    local sg_id="$1"
+    _aws ec2 delete-security-group --group-id "$sg_id" 2>/dev/null
+}
+
+# aws_describe_sgs_by_ids ID [ID ...] — batch fetch SGs by ID, return JSON.
+# Empty arg list → empty SecurityGroups array (so callers can pipe to jq
+# unconditionally).
+aws_describe_sgs_by_ids() {
+    if [[ $# -eq 0 ]]; then
+        printf '%s' '{"SecurityGroups":[]}'
+        return 0
+    fi
+    _aws ec2 describe-security-groups --group-ids "$@" --output json
+}
+
 aws_set_sg_ingress_to() {
     local sg_id="$1"
     local cidr="$2"

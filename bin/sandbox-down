@@ -50,6 +50,19 @@ iso_to_epoch() {
 
 if [[ $# -eq 0 ]]; then usage; exit 2; fi
 
+# cleanup_sandbox_sg NAME — best-effort delete of <NAME>-sg. Per-sandbox SGs
+# are named this way by `up`. Failures are silent and expected: legacy
+# sandboxes share the old SG (no -sg variant exists) and freshly-terminated
+# instances still hold the SG via their ENI for ~60s. Re-run `down` (or
+# leave it for now) to retry.
+cleanup_sandbox_sg() {
+    local sb_name="$1"
+    local sg_name="${sb_name}-sg"
+    if _aws ec2 delete-security-group --group-name "$sg_name" 2>/dev/null; then
+        log_info "deleted SG $sg_name"
+    fi
+}
+
 mode="$1"
 case "$mode" in
     --all)
@@ -59,16 +72,20 @@ case "$mode" in
         json="$(aws_describe_instances_by_tag Project claude-sandbox \
             'pending,running,stopping,stopped')"
         ids=()
-        while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            ids+=("$line")
-        done < <(printf '%s' "$json" | jq -r '.Reservations[].Instances[].InstanceId')
+        names=()
+        while IFS=$'\t' read -r line_id line_name; do
+            [[ -z "$line_id" ]] && continue
+            ids+=("$line_id")
+            [[ -n "$line_name" ]] && names+=("$line_name")
+        done < <(printf '%s' "$json" | jq -r '.Reservations[].Instances[] |
+            "\(.InstanceId)\t\((.Tags // []) | map(select(.Key=="Name")) | .[0].Value // "")"')
         if [[ ${#ids[@]} -eq 0 ]]; then
             log_info "no sandboxes to terminate"
             exit 0
         fi
         log_info "shutting down: ${ids[*]} — track via './bin/sandbox list'"
         aws_terminate_instances "${ids[@]}" >/dev/null
+        for n in "${names[@]}"; do cleanup_sandbox_sg "$n"; done
         ;;
     --stale)
         [[ $# -lt 2 ]] && { usage; exit 2; }
@@ -79,18 +96,21 @@ case "$mode" in
             'pending,running,stopping,stopped')"
         # Pick instances where CreatedAt is older than threshold.
         ids=()
-        while IFS= read -r line; do
-            [[ -z "$line" ]] && continue
-            ids+=("$line")
+        names=()
+        while IFS=$'\t' read -r id name; do
+            [[ -z "$id" ]] && continue
+            ids+=("$id")
+            [[ -n "$name" ]] && names+=("$name")
         done < <(printf '%s' "$json" | jq -r '
             .Reservations[].Instances[] |
             { id: .InstanceId,
+              name: ((.Tags // []) | map(select(.Key=="Name")) | .[0].Value // ""),
               created: ((.Tags // []) | map(select(.Key=="CreatedAt")) | .[0].Value // .LaunchTime) }
-            | "\(.id)\t\(.created)"' | while IFS=$'\t' read -r id created; do
+            | "\(.id)\t\(.name)\t\(.created)"' | while IFS=$'\t' read -r id name created; do
                 created_epoch="$(iso_to_epoch "$created")"
                 age=$(( now - created_epoch ))
                 if (( age >= threshold_sec )); then
-                    echo "$id"
+                    printf '%s\t%s\n' "$id" "$name"
                 fi
             done)
         if [[ ${#ids[@]} -eq 0 ]]; then
@@ -99,6 +119,7 @@ case "$mode" in
         fi
         log_info "shutting down stale: ${ids[*]} — track via './bin/sandbox list'"
         aws_terminate_instances "${ids[@]}" >/dev/null
+        for n in "${names[@]}"; do cleanup_sandbox_sg "$n"; done
         ;;
     --help|-h)
         usage; exit 0 ;;
@@ -108,8 +129,15 @@ case "$mode" in
         # Single name or id.
         target="$mode"
         state=""
+        name=""
         if [[ "$target" =~ ^i-[0-9a-f]+$ ]]; then
             id="$target"
+            # Look up the name from the instance tags so we know what SG
+            # to clean up. Tolerate missing name (silent — cleanup skipped).
+            name="$(_aws ec2 describe-instances --instance-ids "$id" \
+                --query 'Reservations[0].Instances[0].Tags[?Key==`Name`].Value | [0]' \
+                --output text 2>/dev/null || true)"
+            [[ "$name" == "None" ]] && name=""
         else
             # Broad filter so we can detect already-shutting-down / terminated
             # instances by name and skip the redundant terminate call.
@@ -127,6 +155,7 @@ case "$mode" in
                 die "no sandbox named $target"
             fi
             IFS=$'\t' read -r id state <<< "$match"
+            name="$target"
         fi
         case "$state" in
             shutting-down|terminated)
@@ -136,5 +165,6 @@ case "$mode" in
         esac
         log_info "shutting down $target ($id) — track via './bin/sandbox list'"
         aws_terminate_instances "$id" >/dev/null
+        [[ -n "$name" ]] && cleanup_sandbox_sg "$name"
         ;;
 esac

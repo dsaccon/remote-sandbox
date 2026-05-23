@@ -19,8 +19,9 @@ Usage: sandbox <command> [args...]
        sandbox --help
 
 Commands:
-  up [--repo URL] [--name N] [--instance-type T] [--no-spot]
-                 Provision one ephemeral sandbox. Prints `ssh ubuntu@<ip>`.
+  up [--repo URL] [--name N] [--instance-type T] [--no-spot] [--ssh-cidr CIDR]
+                 Provision one ephemeral sandbox. Creates a per-sandbox SG
+                 with :22 ingress from --ssh-cidr (defaults to your IP).
   down <name|id> | --all | --stale <duration>
                  Terminate one sandbox, all of them, or boxes older than
                  the given duration (e.g. 30m, 24h, 2d).
@@ -38,10 +39,20 @@ Commands:
 
 Run `sandbox <command> --help` for command-specific options.
 
-Environment must have AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
-AWS_DEFAULT_REGION set — do `source ./init.sh` in each new shell.
 Settings (instance type, region, key pair, AMI ID, etc.) live in ./config.
 EOF
+
+    # Only nag about AWS creds when they aren't already in the environment —
+    # avoids noise on `--help` after `source ./init.sh`.
+    if [[ -z "${AWS_ACCESS_KEY_ID:-}" \
+       || -z "${AWS_SECRET_ACCESS_KEY:-}" \
+       || -z "${AWS_DEFAULT_REGION:-}" ]]; then
+        cat <<'EOF'
+
+Environment must have AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY /
+AWS_DEFAULT_REGION set — do `source ./init.sh` in each new shell.
+EOF
+    fi
 }
 
 # Top-level help — must short-circuit BEFORE the config check so it works

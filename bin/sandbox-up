@@ -16,6 +16,7 @@ source "$REPO_ROOT/lib/provision.sh"
 usage() {
     cat <<'EOF'
 Usage: sandbox up [--repo URL] [--name N] [--instance-type T] [--no-spot]
+                  [--ssh-cidr CIDR]
 
 Provision one ephemeral sandbox VM and print the SSH command to reach it.
 
@@ -26,18 +27,25 @@ Flags:
   --no-spot           Skip spot, go straight to on-demand. Use this for
                       sessions where a mid-task spot reclaim would be
                       especially costly.
+  --ssh-cidr CIDR     SG :22 ingress for this sandbox. Defaults: the
+                      SSH_INGRESS_CIDR config value, or your auto-detected
+                      HTTPS egress IP if unset. Use `0.0.0.0/0` to leave
+                      SSH open (less secure, but unblocks split-tunnel
+                      networks where HTTPS and SSH egress differ).
 EOF
 }
 
 REPO_URL=""
 NAME=""
 NO_SPOT=0
+SSH_CIDR_FLAG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo)           REPO_URL="$2"; shift 2 ;;
         --name)           NAME="$2"; shift 2 ;;
         --instance-type)  config_set_from_flag INSTANCE_TYPE "$2"; shift 2 ;;
         --no-spot)        NO_SPOT=1; shift ;;
+        --ssh-cidr)       SSH_CIDR_FLAG="$2"; shift 2 ;;
         -h|--help)        usage; exit 0 ;;
         *)                usage >&2; exit 2 ;;
     esac
@@ -57,7 +65,9 @@ USE_SPOT_FINAL="${USE_SPOT:-false}"
 
 preflight_or_die
 
-read -r id < <(provision_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL")
+ssh_cidr="$(resolve_ssh_cidr "$SSH_CIDR_FLAG")"
+
+read -r id < <(provision_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL" "$ssh_cidr")
 
 cat <<EOF
 

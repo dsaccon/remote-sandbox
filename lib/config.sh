@@ -23,6 +23,7 @@ _CONFIG_KEYS=(
     AMI_ID
     AUTO_SHUTDOWN_HOURS
     DOTFILES_REPO
+    SSH_INGRESS_CIDR
 )
 
 # Defaults.
@@ -39,6 +40,7 @@ _config_default() {
         AMI_ID)                   echo "" ;;
         AUTO_SHUTDOWN_HOURS)      echo "8" ;;
         DOTFILES_REPO)            echo "" ;;
+        SSH_INGRESS_CIDR)         echo "" ;;
         *)                        echo "" ;;
     esac
 }
