@@ -11,18 +11,31 @@ source "$REPO_ROOT/lib/config.sh"
 # shellcheck source=../lib/aws.sh
 source "$REPO_ROOT/lib/aws.sh"
 
+only_active=0
 case "${1:-}" in
     -h|--help)
         cat <<'EOF'
-Usage: sandbox list-amis
+Usage: sandbox list-amis [--active]
 
 List every claude-sandbox-* AMI you own in the configured region.
 Columns: CURRENT (* = the AMI in ./config, used by `sandbox up`), ID,
 NAME, AGE, SIZE. Sorted newest first.
 
+  --active   Only show AMIs in use — the one in ./config plus any AMI
+             that a non-terminated sandbox is currently running. The
+             complement is what `sandbox delete-ami` can safely drop.
+
 Use `sandbox delete-ami <id>` to drop old ones (AMI + EBS snapshot).
 EOF
         exit 0
+        ;;
+    --active)
+        only_active=1
+        ;;
+    "")
+        ;;
+    *)
+        die "unknown arg: $1 (try 'sandbox list-amis --help')"
         ;;
 esac
 
@@ -37,6 +50,21 @@ if [[ "$count" -eq 0 ]]; then
 fi
 
 current="${AMI_ID:-}"
+
+# Build the "in use" set for --active: current AMI + AMIs of any
+# non-terminated sandbox. Space-padded string so we can membership-test
+# with a substring match (`" $id "`).
+active_set=""
+if [[ "$only_active" -eq 1 ]]; then
+    [[ -n "$current" ]] && active_set=" $current "
+    inst_json="$(aws_describe_instances_by_tag Project claude-sandbox \
+        'pending,running,stopping,stopped,shutting-down')"
+    while IFS= read -r ami; do
+        [[ -z "$ami" || "$ami" == "null" ]] && continue
+        [[ "$active_set" == *" $ami "* ]] && continue
+        active_set+="$ami "
+    done < <(printf '%s' "$inst_json" | jq -r '.Reservations[].Instances[].ImageId')
+fi
 
 printf '%-3s %-23s %-34s %-10s %-6s\n' '*' ID NAME AGE SIZE
 
@@ -58,6 +86,9 @@ printf '%s' "$json" | jq -r --arg current "$current" '
     ] | @tsv
 ' | while IFS=$'\t' read -r mark id name created size; do
     [[ "$mark" == "-" ]] && mark=""
+    if [[ "$only_active" -eq 1 && "$active_set" != *" $id "* ]]; then
+        continue
+    fi
     created_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "${created%.*}" "+%s" 2>/dev/null \
         || date -u -d "$created" "+%s" 2>/dev/null || echo "$now_epoch")"
     age_sec=$(( now_epoch - created_epoch ))

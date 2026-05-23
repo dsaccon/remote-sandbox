@@ -11,15 +11,27 @@ source "$REPO_ROOT/lib/config.sh"
 # shellcheck source=../lib/aws.sh
 source "$REPO_ROOT/lib/aws.sh"
 
+only_active=0
 case "${1:-}" in
     -h|--help)
         cat <<'EOF'
-Usage: sandbox list
+Usage: sandbox list [--active]
 
 List every sandbox (instances tagged Project=claude-sandbox) in the
 configured region, with columns: NAME, STATE, TYPE, AGE, IP.
+
+  --active   Only show ready sandboxes (running + status checks passed).
+             Hides pending/initializing/stopped/terminated.
 EOF
         exit 0
+        ;;
+    --active)
+        only_active=1
+        ;;
+    "")
+        ;;
+    *)
+        die "unknown arg: $1 (try 'sandbox list --help')"
         ;;
 esac
 
@@ -99,5 +111,8 @@ printf '%s' "$json" | jq -r --argjson statuses "$status_json" '
         age="$(( age_sec / 3600 ))h$(( (age_sec % 3600) / 60 ))m"
     fi
     display_state="$(compute_display_state "$state" "$inst_status" "$sys_status")"
+    if [[ "$only_active" -eq 1 && "$display_state" != "ready" ]]; then
+        continue
+    fi
     printf '%-22s %-14s %-18s %-10s %-16s\n' "$name" "$display_state" "$type" "$age" "$ip"
 done

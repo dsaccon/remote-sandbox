@@ -118,6 +118,7 @@ for details on any subcommand.
 ./bin/sandbox up --name myproject      # custom name
 
 ./bin/sandbox list                     # what's running? (see STATE values below)
+./bin/sandbox list --active            #   ...just the ready ones (terse output)
 ./bin/sandbox ssh <name>               # SSH into a box
 
 ./bin/sandbox down <name>              # terminate one
@@ -126,6 +127,7 @@ for details on any subcommand.
 
 ./bin/sandbox build-ami                # bake a fresh AMI
 ./bin/sandbox list-amis                # list AMIs you own (* = current)
+./bin/sandbox list-amis --active       #   ...only AMIs in use (current + any in-use)
 ./bin/sandbox delete-ami <ami-id> [...] # delete old AMIs (+ their snapshots)
 ```
 

@@ -83,7 +83,12 @@ _sandbox_complete() {
             COMPREPLY=( $(compgen -W "$names --help" -- "$cur") )
             ;;
 
-        list|build-ami|list-amis)
+        list|list-amis)
+            # shellcheck disable=SC2207
+            COMPREPLY=( $(compgen -W "--active --help" -- "$cur") )
+            ;;
+
+        build-ami)
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -W "--help" -- "$cur") )
             ;;

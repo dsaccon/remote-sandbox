@@ -24,10 +24,13 @@ Commands:
   down <name|id> | --all | --stale <duration>
                  Terminate one sandbox, all of them, or boxes older than
                  the given duration (e.g. 30m, 24h, 2d).
-  list           List all sandboxes (Project=claude-sandbox).
+  list [--active]
+                 List all sandboxes (or just ready ones with --active).
   ssh <name>     SSH into a named sandbox.
   build-ami      Bake a fresh AMI; writes AMI_ID to ./config on success.
-  list-amis      List claude-sandbox-* AMIs you own (* marks current).
+  list-amis [--active]
+                 List claude-sandbox-* AMIs you own (* marks current).
+                 --active filters to AMIs in use by running sandboxes.
   delete-ami <ami-id> [<ami-id>...]
                  Deregister AMIs and delete their EBS snapshots. Refuses
                  to delete the current AMI (the one in ./config).
