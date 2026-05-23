@@ -27,6 +27,10 @@ Commands:
   list           List all sandboxes (Project=claude-sandbox).
   ssh <name>     SSH into a named sandbox.
   build-ami      Bake a fresh AMI; writes AMI_ID to ./config on success.
+  list-amis      List claude-sandbox-* AMIs you own (* marks current).
+  delete-ami <ami-id> [<ami-id>...]
+                 Deregister AMIs and delete their EBS snapshots. Refuses
+                 to delete the current AMI (the one in ./config).
 
 Run `sandbox <command> --help` for command-specific options.
 

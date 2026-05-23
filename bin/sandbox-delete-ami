@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# bin/sandbox-delete-ami — deregister AMIs and delete their EBS snapshots.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/aws.sh
+source "$REPO_ROOT/lib/aws.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: sandbox delete-ami <ami-id> [<ami-id>...]
+
+Deregister one or more AMIs and delete their associated EBS snapshots.
+Refuses to delete the AMI currently in ./config (the one new sandboxes
+boot from).
+
+Run `./bin/sandbox list-amis` to see IDs.
+EOF
+}
+
+case "${1:-}" in
+    -h|--help) usage; exit 0 ;;
+esac
+
+[[ $# -ge 1 ]] || { usage; exit 2; }
+
+config_load
+aws_caller_identity
+
+current="${AMI_ID:-}"
+
+# Validate every arg up front. Half-completed deletions across a mixed
+# valid/invalid arg list would be confusing.
+for ami in "$@"; do
+    [[ "$ami" =~ ^ami-[0-9a-f]+$ ]] || die "not an AMI ID: $ami"
+    if [[ -n "$current" && "$ami" == "$current" ]]; then
+        die "refusing to delete $ami — it's the current AMI_ID in ./config"
+    fi
+done
+
+for ami in "$@"; do
+    # Capture snapshot ID(s) BEFORE deregister — once the AMI is gone, the
+    # block-device-mapping info goes with it and we'd orphan the snapshot.
+    snaps="$(aws_image_snapshot_ids "$ami" 2>/dev/null || true)"
+    if [[ -z "$snaps" || "$snaps" == "None" ]]; then
+        log_warn "$ami: no snapshot found (already deleted, or AMI doesn't exist)"
+    fi
+
+    log_info "deregistering $ami"
+    aws_deregister_image "$ami"
+
+    for snap in $snaps; do
+        [[ -z "$snap" || "$snap" == "None" ]] && continue
+        log_info "deleting snapshot $snap"
+        aws_delete_snapshot "$snap"
+    done
+done

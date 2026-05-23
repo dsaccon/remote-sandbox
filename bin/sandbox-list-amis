@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# bin/sandbox-list-amis — list claude-sandbox-* AMIs you own.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/aws.sh
+source "$REPO_ROOT/lib/aws.sh"
+
+case "${1:-}" in
+    -h|--help)
+        cat <<'EOF'
+Usage: sandbox list-amis
+
+List every claude-sandbox-* AMI you own in the configured region.
+Columns: CURRENT (* = the AMI in ./config, used by `sandbox up`), ID,
+NAME, AGE, SIZE. Sorted newest first.
+
+Use `sandbox delete-ami <id>` to drop old ones (AMI + EBS snapshot).
+EOF
+        exit 0
+        ;;
+esac
+
+config_load
+aws_caller_identity
+
+json="$(aws_describe_self_amis)"
+count="$(printf '%s' "$json" | jq '.Images | length')"
+if [[ "$count" -eq 0 ]]; then
+    echo "no claude-sandbox-* AMIs in $AWS_REGION"
+    exit 0
+fi
+
+current="${AMI_ID:-}"
+
+printf '%-3s %-23s %-34s %-10s %-6s\n' '*' ID NAME AGE SIZE
+
+now_epoch="$(date -u +%s)"
+# Emit "-" (not "") for non-current so the first @tsv field is never empty.
+# bash's `read -r` with IFS=$'\t' strips leading tabs (tab is an IFS-whitespace
+# char), which would otherwise shift every column left by one for non-current
+# rows. We translate "-" back to "" before printing.
+printf '%s' "$json" | jq -r --arg current "$current" '
+    .Images |
+    sort_by(.CreationDate) | reverse |
+    .[] |
+    [
+        (if .ImageId == $current then "*" else "-" end),
+        .ImageId,
+        (.Name // "-"),
+        .CreationDate,
+        (((.BlockDeviceMappings // []) | map(select(.Ebs) | .Ebs.VolumeSize) | add) // 0)
+    ] | @tsv
+' | while IFS=$'\t' read -r mark id name created size; do
+    [[ "$mark" == "-" ]] && mark=""
+    created_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "${created%.*}" "+%s" 2>/dev/null \
+        || date -u -d "$created" "+%s" 2>/dev/null || echo "$now_epoch")"
+    age_sec=$(( now_epoch - created_epoch ))
+    if (( age_sec < 3600 )); then
+        age="$(( age_sec / 60 ))m"
+    elif (( age_sec < 86400 )); then
+        age="$(( age_sec / 3600 ))h$(( (age_sec % 3600) / 60 ))m"
+    else
+        age="$(( age_sec / 86400 ))d"
+    fi
+    printf '%-3s %-23s %-34s %-10s %-6s\n' "$mark" "$id" "$name" "$age" "${size}G"
+done

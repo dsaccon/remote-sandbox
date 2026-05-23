@@ -194,6 +194,34 @@ aws_wait_image_available() {
     _aws ec2 wait image-available --image-ids "$ami_id"
 }
 
+# aws_describe_self_amis — all claude-sandbox-* AMIs owned by the caller.
+# Returns describe-images JSON.
+aws_describe_self_amis() {
+    _aws ec2 describe-images --owners self \
+        --filters 'Name=name,Values=claude-sandbox-*' \
+        --output json
+}
+
+aws_deregister_image() {
+    local ami="$1"
+    _aws ec2 deregister-image --image-id "$ami" >/dev/null
+}
+
+aws_delete_snapshot() {
+    local snap="$1"
+    _aws ec2 delete-snapshot --snapshot-id "$snap" >/dev/null
+}
+
+# aws_image_snapshot_ids AMI_ID — print whitespace-separated snapshot IDs
+# attached to the given AMI's EBS block device mappings. Must be called
+# BEFORE deregistering the AMI (after, the image is gone).
+aws_image_snapshot_ids() {
+    local ami="$1"
+    _aws ec2 describe-images --image-ids "$ami" \
+        --query 'Images[0].BlockDeviceMappings[?Ebs].Ebs.SnapshotId' \
+        --output text
+}
+
 aws_run_simple() {
     # Minimal launch for the bake VM: ami, type, key, sg, tag.
     local ami="$1" itype="$2" key="$3" sg="$4" name="$5"

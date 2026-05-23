@@ -125,7 +125,14 @@ for details on any subcommand.
 ./bin/sandbox down --stale 24h         # terminate boxes older than 24h
 
 ./bin/sandbox build-ami                # bake a fresh AMI
+./bin/sandbox list-amis                # list AMIs you own (* = current)
+./bin/sandbox delete-ami <ami-id> [...] # delete old AMIs (+ their snapshots)
 ```
+
+`build-ami` never deletes the previous AMI — each bake adds an AMI + a
+~30 GB EBS snapshot (~$1.50/month each). Use `list-amis` to see them and
+`delete-ami` to clean up; the current AMI (referenced in `./config`) is
+protected.
 
 ### Sandbox lifecycle
 

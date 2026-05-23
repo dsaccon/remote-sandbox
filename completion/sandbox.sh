@@ -32,6 +32,16 @@ _sandbox_list_names() {
         | awk '$2 == "None" { print $1 }'
 }
 
+_sandbox_list_amis() {
+    # AMI IDs for claude-sandbox-* AMIs the caller owns. Silent failure
+    # → empty output (same UX as _sandbox_list_names).
+    local region="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
+    aws ec2 describe-images --region "$region" --owners self \
+        --filters 'Name=name,Values=claude-sandbox-*' \
+        --query 'Images[].ImageId' --output text 2>/dev/null \
+        | tr '\t' '\n'
+}
+
 _sandbox_complete() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
@@ -40,7 +50,7 @@ _sandbox_complete() {
     # Word 1: top-level subcommand or top-level help flag.
     if [[ $COMP_CWORD -eq 1 ]]; then
         # shellcheck disable=SC2207
-        COMPREPLY=( $(compgen -W "up down list ssh build-ami --help -h help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "up down list ssh build-ami list-amis delete-ami --help -h help" -- "$cur") )
         return
     fi
 
@@ -73,9 +83,16 @@ _sandbox_complete() {
             COMPREPLY=( $(compgen -W "$names --help" -- "$cur") )
             ;;
 
-        list|build-ami)
+        list|build-ami|list-amis)
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+            ;;
+
+        delete-ami)
+            local amis
+            amis="$(_sandbox_list_amis)"
+            # shellcheck disable=SC2207
+            COMPREPLY=( $(compgen -W "$amis --help" -- "$cur") )
             ;;
     esac
 }
