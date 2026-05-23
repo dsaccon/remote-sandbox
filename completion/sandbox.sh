@@ -1,16 +1,14 @@
 #!/usr/bin/env bash
 # completion/sandbox.sh — tab completion for ./bin/sandbox in bash + zsh.
 #
-# Enable in your current shell:
+# Normally sourced indirectly via ../init.sh. Source directly only if you
+# want completion without loading .env:
 #     source ./completion/sandbox.sh
-#
-# Or add to ~/.bashrc / ~/.zshrc once:
-#     source /path/to/remote-sandbox/completion/sandbox.sh
 #
 # Requires:
 #   - aws CLI on PATH (it already is if you got this far)
 #   - AWS credentials loaded into the environment for the live-name suggestions
-#     to work (source ./load-env.sh). If creds aren't loaded, completion still
+#     to work (source ./init.sh). If creds aren't loaded, completion still
 #     works for the static parts — it just won't enumerate sandbox names.
 
 # Enable bash-style completion in zsh.

@@ -63,7 +63,7 @@ cp config.example config
 
 # 3. Load credentials into your shell (see "Each new terminal" below) and
 #    verify before you go further:
-source ./load-env.sh
+source ./init.sh
 aws sts get-caller-identity   # should print your account / IAM user ARN
 
 # 4. Bake the AMI. ~10 minutes; you'll re-run this whenever you want fresh
@@ -77,20 +77,21 @@ aws sts get-caller-identity   # should print your account / IAM user ARN
 Before running any command in a freshly-opened terminal:
 
 ```bash
-source ./load-env.sh
+source ./init.sh
 ```
 
-You'll see `load-env: exported [AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION] from ...`. The script refuses to run if you execute it (`./load-env.sh`) because that would set vars in a subshell that dies immediately — it must be **sourced**.
+This loads `.env` into the environment **and** registers tab completion for
+`./bin/sandbox`. You'll see:
 
-### Optional: tab completion
-
-Source the completion file in the same terminal you'll use the CLI from:
-
-```bash
-source ./completion/sandbox.sh
+```
+init: exported [AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_DEFAULT_REGION] from ...
+init: tab completion registered for ./bin/sandbox
 ```
 
-Enables tab completion for the dispatcher in bash and zsh:
+The script refuses to run if you execute it (`./init.sh`) because that would
+set vars in a subshell that dies immediately — it must be **sourced**.
+
+Tab completion covers:
 
 ```
 ./bin/sandbox <TAB>             # → up | down | list | ssh | build-ami | --help
@@ -100,9 +101,9 @@ Enables tab completion for the dispatcher in bash and zsh:
 ./bin/sandbox down --stale <TAB># → 30m | 1h | 4h | 12h | 24h | 48h | 7d
 ```
 
-The name suggestions query EC2 each Tab press (~200-500ms latency). Bake VMs
+Name suggestions query EC2 each Tab press (~200-500ms latency). Bake VMs
 (`sandbox-bake-...`) are filtered out — only your real sandboxes appear.
-Re-source this file after pulling updates that touch `completion/sandbox.sh`.
+Re-source `init.sh` after pulling updates that touch `completion/sandbox.sh`.
 
 ## Commands
 
