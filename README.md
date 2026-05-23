@@ -126,7 +126,7 @@ for details on any subcommand.
 ./bin/sandbox down --stale 24h         # terminate boxes older than 24h
 
 ./bin/sandbox build-ami                # bake a fresh AMI
-./bin/sandbox list-amis                # list AMIs you own (* = current)
+./bin/sandbox list-amis                # list AMIs you own (CURRENT=yes for the in-use one)
 ./bin/sandbox list-amis --active       #   ...only AMIs in use (current + any in-use)
 ./bin/sandbox delete-ami <ami-id> [...] # delete old AMIs (+ their snapshots)
 ```

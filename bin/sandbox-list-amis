@@ -18,8 +18,8 @@ case "${1:-}" in
 Usage: sandbox list-amis [--active]
 
 List every claude-sandbox-* AMI you own in the configured region.
-Columns: CURRENT (* = the AMI in ./config, used by `sandbox up`), ID,
-NAME, AGE, SIZE. Sorted newest first.
+Columns: CURRENT (`yes` = the AMI in ./config, used by `sandbox up`),
+ID, NAME, AGE, SIZE. Sorted newest first.
 
   --active   Only show AMIs in use — the one in ./config plus any AMI
              that a non-terminated sandbox is currently running. The
@@ -66,26 +66,26 @@ if [[ "$only_active" -eq 1 ]]; then
     done < <(printf '%s' "$inst_json" | jq -r '.Reservations[].Instances[].ImageId')
 fi
 
-printf '%-3s %-23s %-34s %-10s %-6s\n' '*' ID NAME AGE SIZE
+printf '%-9s %-23s %-34s %-10s %-6s\n' CURRENT ID NAME AGE SIZE
 
 now_epoch="$(date -u +%s)"
-# Emit "-" (not "") for non-current so the first @tsv field is never empty.
+# Emit "no" (not "") for non-current so the first @tsv field is never empty.
 # bash's `read -r` with IFS=$'\t' strips leading tabs (tab is an IFS-whitespace
 # char), which would otherwise shift every column left by one for non-current
-# rows. We translate "-" back to "" before printing.
+# rows. We translate "no" back to "" before printing.
 printf '%s' "$json" | jq -r --arg current "$current" '
     .Images |
     sort_by(.CreationDate) | reverse |
     .[] |
     [
-        (if .ImageId == $current then "*" else "-" end),
+        (if .ImageId == $current then "yes" else "no" end),
         .ImageId,
         (.Name // "-"),
         .CreationDate,
         (((.BlockDeviceMappings // []) | map(select(.Ebs) | .Ebs.VolumeSize) | add) // 0)
     ] | @tsv
 ' | while IFS=$'\t' read -r mark id name created size; do
-    [[ "$mark" == "-" ]] && mark=""
+    [[ "$mark" == "no" ]] && mark=""
     if [[ "$only_active" -eq 1 && "$active_set" != *" $id "* ]]; then
         continue
     fi
@@ -99,5 +99,5 @@ printf '%s' "$json" | jq -r --arg current "$current" '
     else
         age="$(( age_sec / 86400 ))d"
     fi
-    printf '%-3s %-23s %-34s %-10s %-6s\n' "$mark" "$id" "$name" "$age" "${size}G"
+    printf '%-9s %-23s %-34s %-10s %-6s\n' "$mark" "$id" "$name" "$age" "${size}G"
 done
