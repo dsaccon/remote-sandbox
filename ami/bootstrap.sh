@@ -70,6 +70,10 @@ sudo tar -C /opt -xzf "$nvim_tar"
 sudo ln -sf /opt/nvim-linux-x86_64/bin/nvim /usr/local/bin/nvim
 rm -f "$nvim_tar"
 
+log "xterm-ghostty terminfo (Ubuntu 24.04 ships ncurses 6.4, which lacks it)"
+# System-wide so it works for any user / sudo session.
+sudo tic -x -o /etc/terminfo /tmp/xterm-ghostty.src
+
 log "systemd auto-shutdown unit"
 sudo install -m 0644 /tmp/auto-shutdown.service /etc/systemd/system/auto-shutdown.service
 sudo install -m 0644 /tmp/auto-shutdown.timer   /etc/systemd/system/auto-shutdown.timer

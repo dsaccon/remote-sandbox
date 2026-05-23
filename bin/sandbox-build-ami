@@ -96,6 +96,7 @@ log_info "uploading bootstrap files..."
     "$REPO_ROOT/ami/bootstrap.sh" \
     "$REPO_ROOT/ami/systemd/auto-shutdown.service" \
     "$REPO_ROOT/ami/systemd/auto-shutdown.timer" \
+    "$REPO_ROOT/ami/xterm-ghostty.src" \
     "${SSH_USER}@${ip}:/tmp/"
 
 log_info "running bootstrap (this can take 5-10 minutes)..."
