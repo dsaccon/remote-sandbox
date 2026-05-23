@@ -82,6 +82,16 @@ ssh_opts=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes \
           -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
           -o LogLevel=ERROR -o ConnectTimeout=10)
 
+# Public IP can change between the early SG setup and now (2-3 min on cell
+# tether / VPN / IP-rotating ISPs). Re-check and refresh ingress so SSH
+# doesn't silently time out for the next 7 minutes.
+new_cidr="$(current_public_ip_cidr)"
+if [[ "$new_cidr" != "$cidr" ]]; then
+    log_warn "public IP changed during launch ($cidr → $new_cidr); refreshing SG"
+    aws_set_sg_ingress_to "$sg_id" "$new_cidr"
+    cidr="$new_cidr"
+fi
+
 log_info "waiting for SSH..."
 for i in {1..30}; do
     if "$SSH_CMD" "${ssh_opts[@]}" "${SSH_USER}@${ip}" true 2>/dev/null; then
