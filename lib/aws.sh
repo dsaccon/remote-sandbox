@@ -143,8 +143,12 @@ aws_run_instances_json() {
     trap 'rm -f "$tmpf" "$err_log"' RETURN
     cat > "$tmpf"
 
-    if ! out="$(_aws ec2 run-instances --cli-input-json "file://$tmpf" --output json 2>"$err_log")"; then
-        rc=$?
+    # NB: capture rc via `|| rc=$?`, not `if ! out=$(...); then rc=$?`. After
+    # `! `, $? is the negation's status (0), so the old form returned 0 on
+    # failure — silently breaking the spot→on-demand fallback in provision.sh.
+    rc=0
+    out="$(_aws ec2 run-instances --cli-input-json "file://$tmpf" --output json 2>"$err_log")" || rc=$?
+    if [[ "$rc" -ne 0 ]]; then
         cat "$err_log" >&2
         return "$rc"
     fi

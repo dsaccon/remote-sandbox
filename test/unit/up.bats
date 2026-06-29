@@ -46,7 +46,14 @@ echo "CALL[$((n+1))]: $*" >> "$AWS_STUB_LOG"
 fixture_file="$AWS_FAKE_FIXTURES/$((n+1))"
 if [[ -f "$fixture_file" ]]; then
     rc="$(head -n1 "$fixture_file")"
-    tail -n +2 "$fixture_file"
+    # Real `aws` writes API errors to stderr, not stdout. The fallback path in
+    # provision.sh greps the captured stderr for "InsufficientInstanceCapacity",
+    # so error fixtures (rc != 0) must go to stderr to be seen.
+    if [[ "$rc" -eq 0 ]]; then
+        tail -n +2 "$fixture_file"
+    else
+        tail -n +2 "$fixture_file" >&2
+    fi
     exit "$rc"
 fi
 exit 0
