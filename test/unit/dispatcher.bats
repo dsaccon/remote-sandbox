@@ -30,3 +30,20 @@ setup() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"copy config.example to config"* ]]
 }
+
+@test "sandbox spot routes to the spot subcommand" {
+    tmpdir="$(mktemp -d)"
+    mkdir -p "$tmpdir/bin" "$tmpdir/lib"
+    cp "$REPO_ROOT/bin/sandbox" "$tmpdir/bin/"
+    cp "$REPO_ROOT/lib/log.sh" "$tmpdir/lib/"
+    touch "$tmpdir/config"
+    cat > "$tmpdir/bin/sandbox-spot" <<'EOF'
+#!/usr/bin/env bash
+echo "spot-subcommand-ran: $*"
+EOF
+    chmod +x "$tmpdir/bin/sandbox-spot"
+    cd "$tmpdir"
+    run ./bin/sandbox spot status
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"spot-subcommand-ran: status"* ]]
+}
