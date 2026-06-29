@@ -97,6 +97,7 @@ cat <<EOF
 
       ./bin/sandbox ssh $NAME
 
-  Then run \`claude\` to authenticate this VM. $shutdown_note
+  Claude Code isn't pre-installed: \`npm i -g @anthropic-ai/claude-code\`,
+  then run \`claude\` to authenticate this VM. $shutdown_note
 
 EOF

@@ -25,8 +25,8 @@ Bake a fresh AMI:
   1. Find latest Ubuntu 24.04 amd64 AMI in $AWS_REGION (Canonical owner).
   2. Launch a t3.medium bake VM from it.
   3. Wait for SSH, scp ami/bootstrap.sh + systemd units to the VM.
-  4. Run bootstrap.sh (~5-10 min): installs claude, node, uv, docker,
-     nvim, gh, and your DOTFILES_REPO if set.
+  4. Run bootstrap.sh (~5-10 min): installs node, uv, docker, nvim, gh,
+     and clones claude-hardening (+ DOTFILES_REPO if set) into the home dir.
   5. Create AMI from the bake VM, wait for `available`.
   6. Write the new AMI_ID into ./config, terminate the bake VM.
 
@@ -113,7 +113,7 @@ log_info "uploading bootstrap files..."
 
 log_info "running bootstrap (this can take 5-10 minutes)..."
 "$SSH_CMD" "${ssh_opts[@]}" "${SSH_USER}@${ip}" \
-    "DOTFILES_REPO='${DOTFILES_REPO:-}' bash /tmp/bootstrap.sh"
+    "DOTFILES_REPO='${DOTFILES_REPO:-}' CLAUDE_HARDENING_REPO='${CLAUDE_HARDENING_REPO:-}' bash /tmp/bootstrap.sh"
 
 ami_name="claude-sandbox-$(date -u +%Y%m%dT%H%M%SZ)"
 log_info "creating image $ami_name..."
