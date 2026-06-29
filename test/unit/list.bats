@@ -43,3 +43,22 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"no sandboxes"* ]]
 }
+
+@test "list shows spot vs on-demand in a MARKET column" {
+    cat > "$AWS_STUB_RESPONSE" <<'EOF'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-spot","InstanceType":"m7i-flex.xlarge","InstanceLifecycle":"spot",
+   "State":{"Name":"running"},"LaunchTime":"2026-05-12T10:00:00Z",
+   "Tags":[{"Key":"Name","Value":"alpha-box"},{"Key":"Project","Value":"claude-sandbox"}]},
+  {"InstanceId":"i-od","InstanceType":"m7i-flex.xlarge",
+   "State":{"Name":"running"},"LaunchTime":"2026-05-12T10:00:00Z",
+   "Tags":[{"Key":"Name","Value":"beta-box"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"MARKET"* ]]
+    echo "$output" | grep alpha-box | grep -q -w spot
+    echo "$output" | grep beta-box  | grep -q on-demand
+}
