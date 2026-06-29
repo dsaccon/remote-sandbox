@@ -15,7 +15,7 @@ source "$REPO_ROOT/lib/provision.sh"
 
 usage() {
     cat <<'EOF'
-Usage: sandbox up [--repo URL] [--name N] [--instance-type T] [--no-spot]
+Usage: sandbox up [--repo URL] [--name N] [--instance-type T] [--spot|--no-spot]
                   [--ssh-cidr CIDR]
 
 Provision one ephemeral sandbox VM and print the SSH command to reach it.
@@ -24,9 +24,13 @@ Flags:
   --repo URL          Clone this git URL onto the box during cloud-init.
   --name N            Use N as the sandbox name (default: random hex).
   --instance-type T   Override INSTANCE_TYPE from config (e.g. t3.large).
-  --no-spot           Skip spot, go straight to on-demand. Use this for
-                      sessions where a mid-task spot reclaim would be
-                      especially costly.
+  --spot              Force a spot instance for this launch, overriding the
+                      USE_SPOT config default. Cheaper, but AWS can reclaim
+                      (terminate) the box at any time.
+  --no-spot           Force on-demand for this launch, overriding USE_SPOT.
+                      Use for sessions where a mid-task spot reclaim would be
+                      especially costly. (A per-launch flag wins over config;
+                      change the standing default with `sandbox spot on|off`.)
   --ssh-cidr CIDR     SG :22 ingress for this sandbox. Defaults: the
                       SSH_INGRESS_CIDR config value, or your auto-detected
                       HTTPS egress IP if unset. Use `0.0.0.0/0` to leave
@@ -37,14 +41,19 @@ EOF
 
 REPO_URL=""
 NAME=""
-NO_SPOT=0
+SPOT_OVERRIDE=""   # "" = use config; "true" = --spot; "false" = --no-spot
 SSH_CIDR_FLAG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo)           REPO_URL="$2"; shift 2 ;;
         --name)           NAME="$2"; shift 2 ;;
         --instance-type)  config_set_from_flag INSTANCE_TYPE "$2"; shift 2 ;;
-        --no-spot)        NO_SPOT=1; shift ;;
+        --spot)
+            [[ "$SPOT_OVERRIDE" == "false" ]] && die "conflicting --spot/--no-spot"
+            SPOT_OVERRIDE="true"; shift ;;
+        --no-spot)
+            [[ "$SPOT_OVERRIDE" == "true" ]] && die "conflicting --spot/--no-spot"
+            SPOT_OVERRIDE="false"; shift ;;
         --ssh-cidr)       SSH_CIDR_FLAG="$2"; shift 2 ;;
         -h|--help)        usage; exit 0 ;;
         *)                usage >&2; exit 2 ;;
@@ -60,8 +69,8 @@ if [[ -z "$NAME" ]]; then
     NAME="sandbox-$(openssl rand -hex 4)"
 fi
 
-USE_SPOT_FINAL="${USE_SPOT:-false}"
-[[ "$NO_SPOT" -eq 1 ]] && USE_SPOT_FINAL="false"
+# A per-launch flag wins over the config default.
+USE_SPOT_FINAL="${SPOT_OVERRIDE:-$USE_SPOT}"
 
 preflight_or_die
 
