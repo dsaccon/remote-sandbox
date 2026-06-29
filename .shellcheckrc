@@ -1,0 +1,8 @@
+# ShellCheck config for remote-sandbox.
+#
+# Scripts source siblings via `source "$REPO_ROOT/lib/foo.sh"` with a
+# `# shellcheck source=../lib/foo.sh` directive. Resolve those relative to
+# each script's own directory (not shellcheck's CWD) so `-x` can follow them
+# instead of emitting SC1091 "not following / does not exist" for every source.
+source-path=SCRIPTDIR
+external-sources=true
