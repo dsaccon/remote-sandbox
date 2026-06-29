@@ -47,7 +47,11 @@ set_response() {
 
 @test "aws_set_sg_ingress_to revokes existing then authorizes new CIDR" {
     # First call: describe to find existing rules. Second: revoke. Third: authorize.
-    set_response 0 '{"SecurityGroups":[{"IpPermissions":[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"5.6.7.8/32"}]}]}]}'
+    # aws_set_sg_ingress_to calls describe-security-groups with
+    # --query 'SecurityGroups[0].IpPermissions', so the real CLI returns just
+    # the IpPermissions array. The stub ignores --query and returns this
+    # verbatim, so the fixture must be the projected array, not the full object.
+    set_response 0 '[{"IpProtocol":"tcp","FromPort":22,"ToPort":22,"IpRanges":[{"CidrIp":"5.6.7.8/32"}]}]'
     run aws_set_sg_ingress_to sg-123 "1.2.3.4/32"
     [ "$status" -eq 0 ]
     grep -q -- 'ec2 revoke-security-group-ingress' "$AWS_STUB_LOG"

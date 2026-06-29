@@ -26,6 +26,10 @@ EOF
     # curl stub for ssh-readiness check (we test against the netcat path differently)
     export CURL_CMD="$BATS_TEST_TMPDIR/curl-ok"
     printf '#!/usr/bin/env bash\necho 1.2.3.4\n' > "$CURL_CMD"; chmod +x "$CURL_CMD"
+    # build-ami requires a readable SSH key file (it scps bootstrap to the VM).
+    # Provide a dummy one so the readability guard passes; SSH/SCP are stubbed.
+    export SANDBOX_SSH_KEY_FILE="$BATS_TEST_TMPDIR/key.pem"
+    printf 'dummy-key\n' > "$SANDBOX_SSH_KEY_FILE"
 }
 
 teardown() { rm -rf "$SANDBOX_REPO_ROOT"; }
