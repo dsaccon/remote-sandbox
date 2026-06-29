@@ -31,6 +31,12 @@ setup() {
     [[ "$output" == *"copy config.example to config"* ]]
 }
 
+@test "sandbox --help lists the spot command" {
+    run sandbox --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"spot"* ]]
+}
+
 @test "sandbox spot routes to the spot subcommand" {
     tmpdir="$(mktemp -d)"
     mkdir -p "$tmpdir/bin" "$tmpdir/lib"

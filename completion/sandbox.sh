@@ -50,7 +50,7 @@ _sandbox_complete() {
     # Word 1: top-level subcommand or top-level help flag.
     if [[ $COMP_CWORD -eq 1 ]]; then
         # shellcheck disable=SC2207
-        COMPREPLY=( $(compgen -W "up down list ssh build-ami list-amis delete-ami --help -h help" -- "$cur") )
+        COMPREPLY=( $(compgen -W "up down list ssh spot build-ami list-amis delete-ami --help -h help" -- "$cur") )
         return
     fi
 
@@ -59,7 +59,7 @@ _sandbox_complete() {
             # Static flag list. Value-taking flags (--instance-type / --repo /
             # --name / --ssh-cidr) aren't enumerated.
             # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "--repo --name --instance-type --no-spot --ssh-cidr --help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "--repo --name --instance-type --spot --no-spot --ssh-cidr --help" -- "$cur") )
             ;;
 
         down)
@@ -86,6 +86,11 @@ _sandbox_complete() {
         list|list-amis)
             # shellcheck disable=SC2207
             COMPREPLY=( $(compgen -W "--active --help" -- "$cur") )
+            ;;
+
+        spot)
+            # shellcheck disable=SC2207
+            COMPREPLY=( $(compgen -W "on off status --help" -- "$cur") )
             ;;
 
         build-ami)
