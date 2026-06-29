@@ -128,3 +128,64 @@ set_fixture() {
     [[ "$output" == *"i-xyz"* ]]
     grep -q -- 'run-instances' "$AWS_STUB_LOG"
 }
+
+@test "up --spot forces spot even when config USE_SPOT=false" {
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+AWS_REGION="us-west-2"
+SSH_KEY_NAME="claude-sandbox"
+SSH_USER="ubuntu"
+INSTANCE_TYPE="m7i-flex.xlarge"
+USE_SPOT="false"
+SPOT_FALLBACK_ON_DEMAND="true"
+AMI_ID="ami-abc"
+AUTO_SHUTDOWN_HOURS="0"
+EOF
+    write_aws_fake
+    set_fixture 1 0 '{"Arn":"x"}'
+    set_fixture 2 0 '{"Images":[{"ImageId":"ami-abc"}]}'
+    set_fixture 3 0 '{"KeyPairs":[{"KeyName":"claude-sandbox"}]}'
+    set_fixture 4 0 'sg-123'
+    set_fixture 5 0 '{"SecurityGroups":[{"IpPermissions":[]}]}'
+    set_fixture 6 0 ''
+    set_fixture 7 0 '{"Instances":[{"InstanceId":"i-xyz"}]}'
+
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --spot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"requesting spot instance"* ]]
+    [[ "$output" == *"i-xyz"* ]]
+}
+
+@test "up --no-spot forces on-demand even when config USE_SPOT=true" {
+    write_aws_fake
+    set_fixture 1 0 '{"Arn":"x"}'
+    set_fixture 2 0 '{"Images":[{"ImageId":"ami-abc"}]}'
+    set_fixture 3 0 '{"KeyPairs":[{"KeyName":"claude-sandbox"}]}'
+    set_fixture 4 0 'sg-123'
+    set_fixture 5 0 '{"SecurityGroups":[{"IpPermissions":[]}]}'
+    set_fixture 6 0 ''
+    set_fixture 7 0 '{"Instances":[{"InstanceId":"i-xyz"}]}'
+
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --no-spot
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"requesting on-demand instance"* ]]
+    [[ "$output" == *"i-xyz"* ]]
+}
+
+@test "up with both --spot and --no-spot errors" {
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --spot --no-spot
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"conflicting --spot/--no-spot"* ]]
+}
+
+@test "up --help lists both --spot and --no-spot" {
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --help
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"--spot"* ]]
+    [[ "$output" == *"--no-spot"* ]]
+}
+
+@test "up with both --no-spot and --spot (reverse order) errors" {
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --no-spot --spot
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"conflicting --spot/--no-spot"* ]]
+}

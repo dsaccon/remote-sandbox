@@ -7,6 +7,10 @@ AWS_REGION="us-west-2"            # Oregon
 
 # ---- Instance ----
 INSTANCE_TYPE="m7i-flex.xlarge"   # 16 GB / 4 vCPU recommended
+# Spot is cheaper but AWS can reclaim (terminate) the instance at any time —
+# a box left idle overnight can vanish. Toggle the standing default with
+# `./bin/sandbox spot on|off`, or override per launch with `up --spot` /
+# `up --no-spot`. `./bin/sandbox list` shows each box's MARKET (spot/on-demand).
 USE_SPOT=true
 SPOT_FALLBACK_ON_DEMAND=true
 

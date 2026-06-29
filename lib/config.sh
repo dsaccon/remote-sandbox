@@ -81,18 +81,25 @@ config_set_from_flag() {
     export "$key"
 }
 
-# config_write_ami_id NEW_ID — rewrite the AMI_ID="..." line in ./config.
-config_write_ami_id() {
-    : "${SANDBOX_REPO_ROOT:?config_write_ami_id: SANDBOX_REPO_ROOT not set}"
-    local new_id="$1"
+# config_write_key KEY VALUE — rewrite the `KEY="..."` line in ./config in
+# place, or append it if absent. VALUE is written quoted. Used to persist
+# settings changed from the CLI (AMI_ID after a bake, USE_SPOT toggle, ...).
+config_write_key() {
+    : "${SANDBOX_REPO_ROOT:?config_write_key: SANDBOX_REPO_ROOT not set}"
+    local key="$1" val="$2"
     local cfg="$SANDBOX_REPO_ROOT/config"
     [[ -f "$cfg" ]] || die "no config at $cfg"
     local tmp; tmp="$(mktemp)"
-    if grep -q '^AMI_ID=' "$cfg"; then
-        sed -E 's|^AMI_ID=.*|AMI_ID="'"$new_id"'"|' "$cfg" > "$tmp"
+    if grep -q "^${key}=" "$cfg"; then
+        sed -E "s|^${key}=.*|${key}=\"${val}\"|" "$cfg" > "$tmp"
     else
         cp "$cfg" "$tmp"
-        printf '\nAMI_ID="%s"\n' "$new_id" >> "$tmp"
+        printf '\n%s="%s"\n' "$key" "$val" >> "$tmp"
     fi
     mv "$tmp" "$cfg"
+}
+
+# config_write_ami_id NEW_ID — convenience wrapper over config_write_key.
+config_write_ami_id() {
+    config_write_key AMI_ID "$1"
 }

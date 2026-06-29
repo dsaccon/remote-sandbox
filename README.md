@@ -94,8 +94,8 @@ set vars in a subshell that dies immediately — it must be **sourced**.
 Tab completion covers:
 
 ```
-./bin/sandbox <TAB>             # → up | down | list | ssh | build-ami | --help
-./bin/sandbox up <TAB>          # → --repo --name --instance-type --no-spot --help
+./bin/sandbox <TAB>             # → up | down | list | ssh | spot | build-ami | --help
+./bin/sandbox up <TAB>          # → --repo --name --instance-type --spot --no-spot --help
 ./bin/sandbox ssh <TAB>         # → live list of your running sandbox names
 ./bin/sandbox down <TAB>        # → live names + --all + --stale
 ./bin/sandbox down --stale <TAB># → 30m | 1h | 4h | 12h | 24h | 48h | 7d
@@ -113,7 +113,8 @@ for details on any subcommand.
 ```bash
 ./bin/sandbox up                       # spin up a fresh box (spot) — non-blocking
 ./bin/sandbox up --repo URL            #   ...and clone a repo into it
-./bin/sandbox up --no-spot             # avoid spot (e.g. long unattended tests)
+./bin/sandbox up --no-spot             # avoid spot for this launch (overrides USE_SPOT)
+./bin/sandbox up --spot                # force spot for this launch (overrides USE_SPOT)
 ./bin/sandbox up --instance-type t3.large
 ./bin/sandbox up --name myproject      # custom name
 ./bin/sandbox up --ssh-cidr 1.2.3.4/32 # override the SSH ingress CIDR for this sandbox
@@ -122,6 +123,10 @@ for details on any subcommand.
 ./bin/sandbox list                     # what's running? (see STATE values below)
 ./bin/sandbox list --active            #   ...just the ready ones (terse output)
 ./bin/sandbox ssh <name>               # SSH into a box
+
+./bin/sandbox spot status              # show the standing spot default (USE_SPOT)
+./bin/sandbox spot off                 # make on-demand the standing default
+./bin/sandbox spot on                  # make spot the standing default
 
 ./bin/sandbox down <name>              # terminate one
 ./bin/sandbox down --all               # terminate all
@@ -158,12 +163,12 @@ Typical sequence after `./bin/sandbox up`:
 
 ```bash
 $ ./bin/sandbox list
-NAME                   STATE          TYPE               AGE        IP
-sandbox-26bdd2af       pending        m7i-flex.xlarge    5s         -
+NAME                   STATE          TYPE               MARKET     AGE   IP
+sandbox-26bdd2af       pending        m7i-flex.xlarge    spot       5s    -
 # ...20s later...
-sandbox-26bdd2af       initializing   m7i-flex.xlarge    25s        54.218.x.x
+sandbox-26bdd2af       initializing   m7i-flex.xlarge    spot       25s   54.218.x.x
 # ...60s later...
-sandbox-26bdd2af       ready          m7i-flex.xlarge    85s        54.218.x.x
+sandbox-26bdd2af       ready          m7i-flex.xlarge    spot       85s   54.218.x.x
 
 $ ./bin/sandbox ssh sandbox-26bdd2af
 ```

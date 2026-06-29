@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# bin/sandbox-spot — show or set the standing spot default (USE_SPOT in
+# ./config), used by `up` when neither --spot nor --no-spot is given.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: sandbox spot [on|off|status]
+
+Show or set the standing spot default (USE_SPOT in ./config). `up` uses this
+default when you pass neither --spot nor --no-spot.
+
+  status   (default) Print the current default.
+  on       Set USE_SPOT="true"  — future `up` launches request spot.
+  off      Set USE_SPOT="false" — future `up` launches on-demand.
+
+Override for a single launch with `sandbox up --spot` / `--no-spot`.
+Spot is cheaper but AWS can reclaim it at any time (it terminates the box).
+EOF
+}
+
+action="${1:-status}"
+case "$action" in
+    -h|--help)      usage; exit 0 ;;
+    on|off|status)  ;;
+    *)              usage >&2; die "unknown arg: $1 (try 'sandbox spot --help')" ;;
+esac
+
+config_load
+
+case "$action" in
+    status)
+        if [[ "$USE_SPOT" == "true" ]]; then
+            echo "spot: on (USE_SPOT=true)"
+        else
+            echo "spot: off (USE_SPOT=false)"
+        fi
+        ;;
+    on)
+        config_write_key USE_SPOT "true"
+        echo "spot: on (USE_SPOT=true) — future \`up\` launches request spot"
+        ;;
+    off)
+        config_write_key USE_SPOT "false"
+        echo "spot: off (USE_SPOT=false) — future \`up\` launches on-demand"
+        ;;
+esac

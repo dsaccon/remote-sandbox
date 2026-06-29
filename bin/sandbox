@@ -19,14 +19,19 @@ Usage: sandbox <command> [args...]
        sandbox --help
 
 Commands:
-  up [--repo URL] [--name N] [--instance-type T] [--no-spot] [--ssh-cidr CIDR]
+  up [--repo URL] [--name N] [--instance-type T] [--spot|--no-spot] [--ssh-cidr CIDR]
                  Provision one ephemeral sandbox. Creates a per-sandbox SG
                  with :22 ingress from --ssh-cidr (defaults to your IP).
+                 --spot/--no-spot override the USE_SPOT default for this launch.
   down <name|id> | --all | --stale <duration>
                  Terminate one sandbox, all of them, or boxes older than
                  the given duration (e.g. 30m, 24h, 2d).
   list [--active]
                  List all sandboxes (or just ready ones with --active).
+  spot [on|off|status]
+                 Show or set the standing spot default (USE_SPOT). `up` uses
+                 it unless you pass --spot/--no-spot. Spot is cheaper but AWS
+                 can reclaim (terminate) the box at any time.
   ssh <name>     SSH into a named sandbox.
   build-ami      Bake a fresh AMI; writes AMI_ID to ./config on success.
   list-amis [--active]

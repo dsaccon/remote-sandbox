@@ -18,9 +18,11 @@ case "${1:-}" in
 Usage: sandbox list [--active]
 
 List every sandbox (instances tagged Project=claude-sandbox) in the
-configured region, with columns: NAME, STATE, TYPE, AGE, EXPIRES, IP,
-ALLOWED.
+configured region, with columns: NAME, STATE, TYPE, MARKET, AGE, EXPIRES,
+IP, ALLOWED.
 
+  MARKET   "spot" if the instance is a spot instance (AWS can reclaim it at
+           any time), else "on-demand".
   EXPIRES  Time until the in-VM auto-shutdown timer terminates the box.
            "off" if AUTO_SHUTDOWN_HOURS=0 at launch, "-" if launched
            before this tag existed.
@@ -105,7 +107,7 @@ else
 fi
 
 # Header — STATE column widened to 14 to fit "initializing" / "shutting-down".
-printf '%-22s %-14s %-18s %-10s %-8s %-16s %-18s\n' NAME STATE TYPE AGE EXPIRES IP ALLOWED
+printf '%-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' NAME STATE TYPE MARKET AGE EXPIRES IP ALLOWED
 
 now_epoch="$(date -u +%s)"
 # Join instance data with status data + SG ingress in jq. ALLOWED shows the
@@ -127,9 +129,10 @@ printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg
             | $sgm[.]?
             | (.IpPermissions[]? | select(.IpProtocol=="tcp" and .FromPort==22) | .IpRanges[]?.CidrIp)
         ] | .[0] // "-"),
-        ((.Tags // []) | map(select(.Key=="AutoShutdownHours")) | .[0].Value // "-")
+        ((.Tags // []) | map(select(.Key=="AutoShutdownHours")) | .[0].Value // "-"),
+        (if .InstanceLifecycle=="spot" then "spot" else "on-demand" end)
     ] | @tsv
-' | while IFS=$'\t' read -r name state type launch ip inst_status sys_status cidr shutdown_hours; do
+' | while IFS=$'\t' read -r name state type launch ip inst_status sys_status cidr shutdown_hours market; do
     # `read -r` with IFS=$'\t' treats runs of tabs as one separator (tab is
     # an IFS-whitespace char), so when both status fields are empty the
     # cidr column gets eaten. jq emits "-" placeholders to keep field
@@ -167,6 +170,6 @@ printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg
             fi
             ;;
     esac
-    printf '%-22s %-14s %-18s %-10s %-8s %-16s %-18s\n' \
-        "$name" "$display_state" "$type" "$age" "$expires" "$ip" "$cidr"
+    printf '%-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' \
+        "$name" "$display_state" "$type" "$market" "$age" "$expires" "$ip" "$cidr"
 done

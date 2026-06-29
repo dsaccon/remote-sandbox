@@ -85,3 +85,26 @@ EOF
     # Other lines preserved.
     grep -q '^INSTANCE_TYPE="m7i-flex.xlarge"' "$SANDBOX_REPO_ROOT/config"
 }
+
+@test "config_write_key rewrites an existing key in place" {
+    write_config <<'EOF'
+USE_SPOT="true"
+INSTANCE_TYPE="m7i-flex.xlarge"
+EOF
+    source "$SANDBOX_REPO_ROOT/lib/config.sh"
+    config_write_key USE_SPOT "false"
+    grep -q '^USE_SPOT="false"' "$SANDBOX_REPO_ROOT/config"
+    grep -q '^INSTANCE_TYPE="m7i-flex.xlarge"' "$SANDBOX_REPO_ROOT/config"
+    # exactly one USE_SPOT line — rewrite, not append
+    [ "$(grep -c '^USE_SPOT=' "$SANDBOX_REPO_ROOT/config")" -eq 1 ]
+}
+
+@test "config_write_key appends a missing key" {
+    write_config <<'EOF'
+INSTANCE_TYPE="m7i-flex.xlarge"
+EOF
+    source "$SANDBOX_REPO_ROOT/lib/config.sh"
+    config_write_key USE_SPOT "false"
+    grep -q '^USE_SPOT="false"' "$SANDBOX_REPO_ROOT/config"
+    grep -q '^INSTANCE_TYPE="m7i-flex.xlarge"' "$SANDBOX_REPO_ROOT/config"
+}
