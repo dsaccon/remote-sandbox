@@ -6,6 +6,7 @@
 set -euo pipefail
 
 DOTFILES_REPO="${DOTFILES_REPO:-}"
+CLAUDE_HARDENING_REPO="${CLAUDE_HARDENING_REPO:-}"
 
 log() { printf '[bootstrap %s] %s\n' "$(date -u +%H:%M:%SZ)" "$*"; }
 
@@ -54,10 +55,6 @@ https://cli.github.com/packages stable main" \
 sudo apt-get update -y
 sudo apt-get install -y gh
 
-log "claude code CLI"
-# Official install one-liner — uses npm under the hood, installs to /usr/local.
-sudo npm install -g @anthropic-ai/claude-code
-
 log "fd alias (Ubuntu names it fdfind)"
 sudo ln -sf /usr/bin/fdfind /usr/local/bin/fd
 
@@ -84,6 +81,15 @@ if [[ -n "$DOTFILES_REPO" ]]; then
     # If there's an install.sh, run it; otherwise leave it for the user.
     if [[ -x /home/ubuntu/dotfiles/install.sh ]]; then
         sudo -u ubuntu bash -lc 'cd ~/dotfiles && ./install.sh'
+    fi
+fi
+
+if [[ -n "$CLAUDE_HARDENING_REPO" ]]; then
+    log "claude-hardening: $CLAUDE_HARDENING_REPO"
+    sudo -u ubuntu git clone "$CLAUDE_HARDENING_REPO" /home/ubuntu/claude-hardening
+    # If there's an install.sh, run it; otherwise leave it for the user.
+    if [[ -x /home/ubuntu/claude-hardening/install.sh ]]; then
+        sudo -u ubuntu bash -lc 'cd ~/claude-hardening && ./install.sh'
     fi
 fi
 

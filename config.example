@@ -42,5 +42,8 @@ AMI_ID=""
 # based, so active use doesn't reset it. 0 disables it.
 AUTO_SHUTDOWN_HOURS=0
 
-# ---- Optional: dotfiles cloned to ~ during AMI bake ----
+# ---- Optional: repos cloned to ~ during AMI bake ----
 DOTFILES_REPO=""                  # e.g. "https://github.com/dsaccon/dotfiles.git"
+CLAUDE_HARDENING_REPO=""          # e.g. "https://github.com/dsaccon/claude-hardening.git"
+                                  # Both must be publicly cloneable — the bake VM
+                                  # has no GitHub credentials.

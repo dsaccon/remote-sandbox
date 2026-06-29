@@ -21,9 +21,9 @@ That's it.
   `bash` (3.2 is fine — scripts are 3.2-clean), `awk`, `sed`, `date`,
   `openssl`.
 - **Lives inside the sandbox, NOT on your laptop:** `shellcheck`, `bats-core`,
-  neovim, Node, `pnpm`, `bun`, `uv`, Docker, `gh`, the Claude Code CLI —
-  all installed during the AMI bake (one-time, ~10 min) so they never
-  touch your main machine.
+  neovim, Node, `pnpm`, `bun`, `uv`, Docker, `gh` — all installed during the
+  AMI bake (one-time, ~10 min) so they never touch your main machine. (Claude
+  Code is installed per-session, not baked — see "Once you're SSHed in".)
 
 This narrow footprint is the project's reason for existing: to limit blast
 radius from supply-chain attacks on dev tooling by keeping the laptop side
@@ -178,9 +178,14 @@ $ ./bin/sandbox ssh sandbox-26bdd2af
 
 ## Once you're SSHed in
 
-Run `claude` — it prints a URL. Open the URL in your laptop browser, approve,
-and the browser will show a code. Paste that code back into the SSH terminal.
-The OAuth token lives on this VM only, and dies when you `down` the box.
+Claude Code is not baked into the AMI (a pinned version goes stale fast and is
+a pain to upgrade in place) — install the latest yourself:
+
+    npm install -g @anthropic-ai/claude-code
+
+Then run `claude` — it prints a URL. Open the URL in your laptop browser,
+approve, and the browser will show a code. Paste that code back into the SSH
+terminal. The OAuth token lives on this VM only, and dies when you `down` the box.
 
 ## Cost
 
