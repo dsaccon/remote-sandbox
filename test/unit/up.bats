@@ -183,3 +183,9 @@ EOF
     [[ "$output" == *"--spot"* ]]
     [[ "$output" == *"--no-spot"* ]]
 }
+
+@test "up with both --no-spot and --spot (reverse order) errors" {
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --no-spot --spot
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"conflicting --spot/--no-spot"* ]]
+}
