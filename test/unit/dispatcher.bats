@@ -12,7 +12,16 @@ setup() {
 }
 
 @test "sandbox unknown-cmd errors clearly" {
-    run sandbox bogus
+    # Needs a config present, else the dispatcher dies on the config check
+    # before reaching the unknown-command branch. Run from a tmpdir that has
+    # one (a fresh clone has no ./config — it's gitignored).
+    tmpdir="$(mktemp -d)"
+    mkdir -p "$tmpdir/bin" "$tmpdir/lib"
+    cp "$REPO_ROOT/bin/sandbox" "$tmpdir/bin/"
+    cp "$REPO_ROOT/lib/log.sh" "$tmpdir/lib/"
+    touch "$tmpdir/config"
+    cd "$tmpdir"
+    run ./bin/sandbox bogus
     [ "$status" -ne 0 ]
     [[ "$output" == *"unknown command: bogus"* ]]
 }

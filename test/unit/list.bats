@@ -29,7 +29,9 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"NAME"* ]]
     [[ "$output" == *"sandbox-abc"* ]]
-    [[ "$output" == *"running"* ]]
+    # State.Name is "running" but the stub returns no instance-status data, so
+    # compute_display_state reports "initializing" (status checks not yet seen).
+    [[ "$output" == *"initializing"* ]]
     [[ "$output" == *"m7i-flex.xlarge"* ]]
     [[ "$output" == *"1.2.3.4"* ]]
 }

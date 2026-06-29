@@ -57,6 +57,8 @@ current_public_ip_cidr() {
 # Auto-detect uses current_public_ip_cidr which fetches over HTTPS — that egress
 # IP is wrong for users whose SSH traffic exits via a different path (split
 # tunnel, VPN, etc.); they should set SSH_INGRESS_CIDR explicitly.
+# Intentionally callable with no args (build-ami does so); silence SC2119/SC2120.
+# shellcheck disable=SC2120
 resolve_ssh_cidr() {
     local override="${1:-}"
     if [[ -n "$override" ]]; then

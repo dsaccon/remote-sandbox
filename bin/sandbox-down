@@ -134,6 +134,9 @@ case "$mode" in
             id="$target"
             # Look up the name from the instance tags so we know what SG
             # to clean up. Tolerate missing name (silent — cleanup skipped).
+            # Single quotes are intentional — this is a JMESPath expression for
+            # the aws CLI, not a shell string meant to expand.
+            # shellcheck disable=SC2016
             name="$(_aws ec2 describe-instances --instance-ids "$id" \
                 --query 'Reservations[0].Instances[0].Tags[?Key==`Name`].Value | [0]' \
                 --output text 2>/dev/null || true)"

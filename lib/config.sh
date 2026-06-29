@@ -78,6 +78,8 @@ config_load() {
 config_set_from_flag() {
     local key="$1"; local val="$2"
     printf -v "$key" '%s' "$val"
+    # Dynamic export: export the variable named by $key, not a literal "key".
+    # shellcheck disable=SC2163
     export "$key"
 }
 
