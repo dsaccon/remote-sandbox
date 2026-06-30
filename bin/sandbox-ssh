@@ -32,44 +32,17 @@ name="$1"
 config_load
 aws_caller_identity
 
-# Include shutting-down + terminated so the state-based error messages
-# below trigger correctly during/after `sandbox down`.
-json="$(aws_describe_instances_by_tag Name "$name" \
-    'pending,running,stopping,stopped,shutting-down,terminated')"
-
-# First check: does ANY instance with this name exist (in any state)?
-state="$(printf '%s' "$json" | jq -r 'first(.Reservations[].Instances[].State.Name) // empty')"
-if [[ -z "$state" ]]; then
-    die "no sandbox named $name in $AWS_REGION (try ./bin/sandbox list)"
-fi
-
-# Distinct error per non-running state so the user knows whether to wait,
-# wake up, or give up.
-case "$state" in
-    pending)
-        die "sandbox $name is still booting (state: pending). Try again in a moment, or check './bin/sandbox list' for status." ;;
-    stopping|stopped)
-        die "sandbox $name is $state. This box was halted (auto-shutdown timer or manual). Up a new one with './bin/sandbox up'." ;;
-    shutting-down|terminated)
-        die "sandbox $name is $state — gone or going. Up a fresh one with './bin/sandbox up'." ;;
-    running)
-        : # fall through to SSH
-        ;;
-    *)
-        die "sandbox $name is in unexpected state '$state'" ;;
-esac
-
-# Limit inside jq (via first()) rather than `| head -n1` to avoid SIGPIPE
-# under `set -o pipefail` if there's more than one running instance.
-ip="$(printf '%s' "$json" | jq -r 'first(.Reservations[].Instances[] | select(.State.Name=="running") | .PublicIpAddress) // empty')"
-
-if [[ -z "$ip" || "$ip" == "null" ]]; then
-    die "sandbox $name is running but has no public IP yet — check './bin/sandbox list'"
-fi
+# Resolve <name> to the running box's public IP (shared with `scp`). Dies with
+# a state-specific message if the box is missing/booting/stopped/gone.
+ip="$(aws_resolve_running_sandbox_ip "$name")" || exit 1
 
 ssh_args=()
 if [[ -n "${SSH_KEY_FILE:-}" && -r "$SSH_KEY_FILE" ]]; then
     ssh_args+=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes)
 fi
+# Fold the destination into the array so the expansion below is never empty —
+# "${arr[@]}" on an empty array is an "unbound variable" error under `set -u`
+# on bash 3.2 (the laptop default), which fires when no key file is readable.
+ssh_args+=("${SSH_USER}@${ip}")
 
-exec "$SSH_CMD" "${ssh_args[@]}" "${SSH_USER}@${ip}"
+exec "$SSH_CMD" "${ssh_args[@]}"

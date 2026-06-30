@@ -1,0 +1,309 @@
+#!/usr/bin/env bash
+# bin/sandbox-scp — copy files between your laptop and a named sandbox.
+#
+#   upload (default):  sandbox scp <name> <src-path> [dest-path]
+#   download (-d):      sandbox scp <name> -d [remote-src] [local-dest]
+#
+# Resolves <name> to the box's public IP (like sandbox-ssh) and runs scp with
+# the same key handling. When a remote path is omitted you pick it by walking
+# the remote filesystem with the arrow keys.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/aws.sh
+source "$REPO_ROOT/lib/aws.sh"
+
+: "${SSH_CMD:=ssh}"
+: "${SCP_CMD:=scp}"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  sandbox scp <name> <src-path> [dest-path]       upload   (local -> sandbox)
+  sandbox scp <name> -d [remote-src] [local-dest]  download (sandbox -> local)
+
+<name> is resolved exactly as `sandbox ssh` does. The SSH key file
+(-i $SSH_KEY_FILE) and IdentitiesOnly=yes are passed automatically.
+
+Upload:
+  <src-path>   a local file or directory (a directory is copied with scp -r).
+  [dest-path]  remote target; omit it to pick the destination DIRECTORY with
+               the arrow-key browser. The file lands there under its own name.
+
+Download (-d / --download):
+  [remote-src]  the file to fetch; omit it to pick a FILE with the arrow-key
+                browser. Files only — directories aren't fetched.
+  [local-dest]  where it lands locally (defaults to the current directory).
+  -o, --output <path>
+                local destination — same as [local-dest], but usable when you
+                omit [remote-src] to browse (no positional slot is left then).
+                e.g.  sandbox scp <name> -d -o ~/Downloads
+
+Browser keys:
+  up/down move · right/enter open dir (or choose) · left parent
+  u upload-here (upload only) · q/Esc cancel
+EOF
+}
+
+# Parse argv: -h/--help, -d/--download and -o/--output may appear anywhere;
+# everything else is a positional (name, then the path(s)).
+download=0
+have_out=0
+out_dest=""
+positionals=()
+expect_out=0
+for arg in "$@"; do
+    if (( expect_out )); then
+        out_dest="$arg"; have_out=1; expect_out=0; continue
+    fi
+    case "$arg" in
+        -h|--help)     usage; exit 0 ;;
+        -d|--download) download=1 ;;
+        -o|--output)   expect_out=1 ;;
+        --output=*)    out_dest="${arg#*=}"; have_out=1 ;;
+        *)             positionals+=("$arg") ;;
+    esac
+done
+if (( expect_out )); then
+    die "-o/--output requires a directory or file argument"
+fi
+
+name="${positionals[0]:-}"
+if [[ -z "$name" ]]; then
+    usage >&2
+    exit 2
+fi
+if (( have_out )) && (( ! download )); then
+    die "-o/--output is only valid with -d (download); upload's remote dest is the [dest-path] argument"
+fi
+
+# Upload needs a local <src-path>; validate it before touching AWS (fail fast).
+src=""
+if (( ! download )); then
+    src="${positionals[1]:-}"
+    if [[ -z "$src" ]]; then
+        usage >&2
+        exit 2
+    fi
+    [[ -e "$src" ]] || die "source path not found: $src"
+fi
+
+# remote_quote STR — single-quote STR for safe interpolation into a command we
+# hand to the remote shell over ssh/scp (handles spaces and embedded quotes).
+remote_quote() {
+    local q="${1//\'/\'\\\'\'}"
+    printf "'%s'" "$q"
+}
+
+# read_key — read one keypress from stdin and set the global KEY to a token:
+# UP / DOWN / LEFT / RIGHT / ENTER / QUIT / EOF, or the literal character for
+# anything else. Decodes the ESC [A / ESC OA arrow sequences. Uses a 1s integer
+# timeout on the sequence tail (bash 3.2 has no fractional -t) so a bare ESC
+# still resolves (to QUIT) instead of hanging.
+read_key() {
+    local k rest
+    IFS= read -rsn1 k || { KEY=EOF; return; }
+    case "$k" in
+        ''|$'\r')  KEY=ENTER; return ;;        # newline or carriage return
+        $'\e')
+            IFS= read -rsn2 -t 1 rest 2>/dev/null || rest=''
+            case "$rest" in
+                '[A'|'OA') KEY=UP ;;
+                '[B'|'OB') KEY=DOWN ;;
+                '[C'|'OC') KEY=RIGHT ;;
+                '[D'|'OD') KEY=LEFT ;;
+                '')        KEY=QUIT ;;          # bare ESC
+                *)         KEY=OTHER ;;
+            esac
+            return ;;
+        *) KEY="$k"; return ;;
+    esac
+}
+
+# browse_remote MODE IP — interactively walk the remote filesystem with the
+# arrow keys and echo the chosen absolute path to stdout. The menu is drawn on
+# stderr (redrawn in place) and keys are read from stdin, so the chosen path is
+# the only stdout. Each directory is listed with one `ssh -n` round-trip (`-n`
+# so ssh doesn't eat the keypresses); only changing directory costs a round-trip.
+#
+#   MODE=dir   pick a DIRECTORY (upload target). A "[ upload here ]" row and the
+#              u key choose the directory currently shown.
+#   MODE=file  pick a FILE (download source). Files are listed alongside dirs;
+#              Enter on a file chooses it.
+browse_remote() {
+    local mode="$1" ip="$2"
+    local cur="."   # login dir; canonicalised to an absolute path on listing
+    local drawn=0   # lines drawn last frame, so we can redraw in place
+    local KEY
+
+    while true; do
+        # --- list the current directory (one ssh round-trip) ---
+        local ssh_argv=(-n)
+        [[ ${#key_args[@]} -gt 0 ]] && ssh_argv+=("${key_args[@]}")
+        ssh_argv+=("${SSH_USER}@${ip}" "cd $(remote_quote "$cur") && pwd && ls -1Ap")
+
+        local listing
+        if ! listing="$("$SSH_CMD" "${ssh_argv[@]}" 2>/dev/null)"; then
+            (( drawn > 0 )) && printf '\033[%dA\r\033[J' "$drawn" >&2
+            die "could not list remote directory: $cur"
+        fi
+
+        # First line is the absolute pwd; the rest are entries, dirs marked with
+        # a trailing slash by `ls -p`. Slice with parameter expansion (no
+        # head/tail) to stay clear of SIGPIPE under pipefail.
+        local abs="${listing%%$'\n'*}"
+        local rest=""
+        [[ "$listing" == *$'\n'* ]] && rest="${listing#*$'\n'}"
+
+        # Parse entries into parallel names[]/isdir[]. dir mode lists only
+        # directories; file mode lists files too.
+        local names=() isdir=() line
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if [[ "$line" == */ ]]; then
+                names+=("${line%/}"); isdir+=(1)
+            elif [[ "$mode" == file ]]; then
+                names+=("$line"); isdir+=(0)
+            fi
+        done <<< "$rest"
+
+        # dir mode has a synthetic row 0 = "[ upload here ]".
+        local head=0
+        [[ "$mode" == dir ]] && head=1
+        local nrows=$(( head + ${#names[@]} ))
+        local sel=0 refetch=0
+
+        # --- navigate within this directory until we change dirs or finish ---
+        while (( refetch == 0 )); do
+            (( drawn > 0 )) && printf '\033[%dA\r\033[J' "$drawn" >&2
+            {
+                printf '  remote: %s\n' "$abs"
+                local r idx label
+                for (( r = 0; r < nrows; r++ )); do
+                    if (( head && r == 0 )); then
+                        label='[ upload here ]'
+                    else
+                        idx=$(( r - head ))
+                        if (( isdir[idx] )); then label="${names[idx]}/"; else label="${names[idx]}"; fi
+                    fi
+                    if (( r == sel )); then
+                        printf '  \033[7m %s \033[0m\n' "$label"
+                    else
+                        printf '    %s\n' "$label"
+                    fi
+                done
+                if [[ "$mode" == dir ]]; then
+                    printf '  \033[2mup/down move · right/enter open · left up · u upload-here · q quit\033[0m\n'
+                else
+                    printf '  \033[2mup/down move · right/enter open dir or pick file · left up · q quit\033[0m\n'
+                fi
+            } >&2
+            drawn=$(( nrows + 2 ))
+
+            read_key
+            case "$KEY" in
+                UP)    if (( sel > 0 ));         then sel=$(( sel - 1 )); fi ;;
+                DOWN)  if (( sel < nrows - 1 )); then sel=$(( sel + 1 )); fi ;;
+                LEFT)  cur="$abs/.."; refetch=1 ;;
+                RIGHT)
+                    if (( head && sel == 0 )); then
+                        :   # right on "[ upload here ]" does nothing
+                    else
+                        idx=$(( sel - head ))
+                        if (( idx >= 0 && idx < ${#names[@]} )) && (( isdir[idx] )); then
+                            cur="$abs/${names[idx]}"; refetch=1
+                        fi
+                    fi ;;
+                ENTER)
+                    if (( head && sel == 0 )); then
+                        printf '\033[%dA\r\033[J' "$drawn" >&2
+                        printf '%s' "$abs"; return 0           # choose dir (upload)
+                    else
+                        idx=$(( sel - head ))
+                        if (( idx >= 0 && idx < ${#names[@]} )); then
+                            if (( isdir[idx] )); then
+                                cur="$abs/${names[idx]}"; refetch=1   # descend
+                            else
+                                printf '\033[%dA\r\033[J' "$drawn" >&2
+                                printf '%s/%s' "$abs" "${names[idx]}"; return 0   # pick file (download)
+                            fi
+                        fi
+                    fi ;;
+                u|U)
+                    if [[ "$mode" == dir ]]; then
+                        printf '\033[%dA\r\033[J' "$drawn" >&2
+                        printf '%s' "$abs"; return 0
+                    fi ;;
+                q|Q|QUIT|EOF)
+                    printf '\033[%dA\r\033[J' "$drawn" >&2
+                    [[ "$mode" == dir ]] && die "upload cancelled" || die "download cancelled" ;;
+                *) : ;;   # ignore unrecognised keys
+            esac
+        done
+    done
+}
+
+config_load
+aws_caller_identity
+
+# Resolve <name> to the running box's public IP (shared with `ssh`).
+ip="$(aws_resolve_running_sandbox_ip "$name")" || exit 1
+
+# Same key handling as sandbox-ssh.
+key_args=()
+if [[ -n "${SSH_KEY_FILE:-}" && -r "$SSH_KEY_FILE" ]]; then
+    key_args+=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes)
+fi
+
+if (( download )); then
+    # --- download: sandbox -> local ---
+    remote_src="${positionals[1]:-}"
+    # Local destination: -o/--output wins; else the positional [local-dest];
+    # else the current directory. -o is the way to set it in interactive mode,
+    # where there's no positional slot left for it.
+    if (( have_out )); then
+        local_dest="$out_dest"
+    else
+        local_dest="${positionals[2]:-.}"
+    fi
+
+    # No remote-src → pick a file interactively (returns an absolute path).
+    if [[ -z "$remote_src" ]]; then
+        remote_src="$(browse_remote file "$ip")" || exit 1
+    fi
+
+    # Pass the remote path VERBATIM — do NOT shell-quote it. Modern scp uses the
+    # SFTP protocol, where the remote path is taken literally; quoting it makes
+    # scp look for a filename that literally contains the quotes. Spaces are
+    # fine because the whole user@host:path is a single argv element. (This
+    # matches how upload passes its remote dest.)
+    scp_argv=()
+    [[ ${#key_args[@]} -gt 0 ]] && scp_argv+=("${key_args[@]}")
+    scp_argv+=("${SSH_USER}@${ip}:${remote_src}" "$local_dest")
+
+    log_info "downloading $name:$remote_src → $local_dest"
+    exec "$SCP_CMD" "${scp_argv[@]}"
+else
+    # --- upload: local -> sandbox ---
+    dest="${positionals[2]:-}"
+
+    # No dest given → pick the destination directory interactively.
+    if [[ -z "$dest" ]]; then
+        dest="$(browse_remote dir "$ip")" || exit 1
+    fi
+
+    # Build argv in one array so the final expansion is never empty (keeps us
+    # clean under `set -u` on bash 3.2, where "${arr[@]}" on an empty array errors).
+    scp_argv=()
+    [[ ${#key_args[@]} -gt 0 ]] && scp_argv+=("${key_args[@]}")
+    [[ -d "$src" ]] && scp_argv+=(-r)
+    scp_argv+=("$src" "${SSH_USER}@${ip}:${dest}")
+
+    log_info "uploading $src → $name:$dest"
+    exec "$SCP_CMD" "${scp_argv[@]}"
+fi

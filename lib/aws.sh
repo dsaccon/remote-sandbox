@@ -182,6 +182,53 @@ aws_describe_instances_by_tag() {
         --output json
 }
 
+# aws_resolve_running_sandbox_ip NAME — resolve a sandbox NAME (its EC2 Name
+# tag) to the public IP of its running instance. Prints the IP to stdout on
+# success. On a missing or non-running instance it calls `die` with a message
+# that tells the user whether to wait, re-up, or check `list`. Requires config
+# loaded (AWS_REGION) and creds verified. Shared by `ssh` and `scp` so the two
+# resolve names identically.
+aws_resolve_running_sandbox_ip() {
+    local name="$1"
+    local json state ip
+
+    # Include shutting-down + terminated so the state-based error messages
+    # below trigger correctly during/after `sandbox down`.
+    json="$(aws_describe_instances_by_tag Name "$name" \
+        'pending,running,stopping,stopped,shutting-down,terminated')"
+
+    # First check: does ANY instance with this name exist (in any state)?
+    state="$(printf '%s' "$json" | jq -r 'first(.Reservations[].Instances[].State.Name) // empty')"
+    if [[ -z "$state" ]]; then
+        die "no sandbox named $name in $AWS_REGION (try ./bin/sandbox list)"
+    fi
+
+    # Distinct error per non-running state so the user knows whether to wait,
+    # wake up, or give up.
+    case "$state" in
+        pending)
+            die "sandbox $name is still booting (state: pending). Try again in a moment, or check './bin/sandbox list' for status." ;;
+        stopping|stopped)
+            die "sandbox $name is $state. This box was halted (auto-shutdown timer or manual). Up a new one with './bin/sandbox up'." ;;
+        shutting-down|terminated)
+            die "sandbox $name is $state — gone or going. Up a fresh one with './bin/sandbox up'." ;;
+        running)
+            : # fall through
+            ;;
+        *)
+            die "sandbox $name is in unexpected state '$state'" ;;
+    esac
+
+    # Limit inside jq (via first()) rather than `| head -n1` to avoid SIGPIPE
+    # under `set -o pipefail` if there's more than one running instance.
+    ip="$(printf '%s' "$json" | jq -r 'first(.Reservations[].Instances[] | select(.State.Name=="running") | .PublicIpAddress) // empty')"
+
+    if [[ -z "$ip" || "$ip" == "null" ]]; then
+        die "sandbox $name is running but has no public IP yet — check './bin/sandbox list'"
+    fi
+    printf '%s' "$ip"
+}
+
 aws_terminate_instances() {
     [[ $# -eq 0 ]] && return 0
     _aws ec2 terminate-instances --instance-ids "$@" --output json

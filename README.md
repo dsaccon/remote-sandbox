@@ -94,9 +94,10 @@ set vars in a subshell that dies immediately — it must be **sourced**.
 Tab completion covers:
 
 ```
-./bin/sandbox <TAB>             # → up | down | list | ssh | spot | build-ami | --help
+./bin/sandbox <TAB>             # → up | down | list | ssh | scp | spot | build-ami | --help
 ./bin/sandbox up <TAB>          # → --repo --name --instance-type --spot --no-spot --help
 ./bin/sandbox ssh <TAB>         # → live list of your running sandbox names
+./bin/sandbox scp <TAB>         # → live names; then local file completion for <src>
 ./bin/sandbox down <TAB>        # → live names + --all + --stale
 ./bin/sandbox down --stale <TAB># → 30m | 1h | 4h | 12h | 24h | 48h | 7d
 ```
@@ -123,6 +124,12 @@ for details on any subcommand.
 ./bin/sandbox list                     # what's running? (see STATE values below)
 ./bin/sandbox list --active            #   ...just the ready ones (terse output)
 ./bin/sandbox ssh <name>               # SSH into a box
+
+./bin/sandbox scp <name> <src> <dest>  # upload a file/dir to a box
+./bin/sandbox scp <name> <src>         #   ...omit dest to pick it with the arrow keys
+./bin/sandbox scp <name> -d <remote> <local>  # download a file FROM a box
+./bin/sandbox scp <name> -d            #   ...omit remote to pick a file with the arrow keys
+./bin/sandbox scp <name> -d -o ~/dl    #   ...with -o/--output to set the local dest
 
 ./bin/sandbox spot status              # show the standing spot default (USE_SPOT)
 ./bin/sandbox spot off                 # make on-demand the standing default

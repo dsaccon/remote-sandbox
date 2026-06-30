@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/sandbox — dispatcher.
 # Usage: sandbox <command> [args...]
-# Commands: up, down, list, ssh, build-ami
+# Commands: up, down, list, ssh, scp, build-ami
 
 set -euo pipefail
 
@@ -33,6 +33,14 @@ Commands:
                  it unless you pass --spot/--no-spot. Spot is cheaper but AWS
                  can reclaim (terminate) the box at any time.
   ssh <name>     SSH into a named sandbox.
+  scp <name> <src-path> [dest-path]
+                 Upload a local file or directory to a sandbox (dir → scp -r).
+                 With no dest-path, navigate the remote filesystem
+                 interactively to choose the destination directory.
+  scp <name> -d [remote-src] [local-dest]
+                 Download a file FROM a sandbox (-d / --download). With no
+                 remote-src, browse the remote filesystem and pick a file;
+                 local-dest defaults to the current directory.
   build-ami      Bake a fresh AMI; writes AMI_ID to ./config on success.
   list-amis [--active]
                  List claude-sandbox-* AMIs you own. The CURRENT column
