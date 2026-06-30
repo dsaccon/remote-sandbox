@@ -241,7 +241,7 @@ browse_remote() {
                     fi ;;
                 q|Q|QUIT|EOF)
                     printf '\033[%dA\r\033[J' "$drawn" >&2
-                    [[ "$mode" == dir ]] && die "upload cancelled" || die "download cancelled" ;;
+                    if [[ "$mode" == dir ]]; then die "upload cancelled"; else die "download cancelled"; fi ;;
                 *) : ;;   # ignore unrecognised keys
             esac
         done
