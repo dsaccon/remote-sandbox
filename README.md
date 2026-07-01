@@ -124,6 +124,8 @@ for details on any subcommand.
 ./bin/sandbox list                     # what's running? (see STATE values below)
 ./bin/sandbox list --active            #   ...just the ready ones (terse output)
 ./bin/sandbox ssh <name>               # SSH into a box
+#   ...opens as a cmux ssh workspace instead if cmux is installed and running
+#   (set SSH_USE_CMUX=false in ./config to always use plain ssh)
 
 ./bin/sandbox scp <name> <src> <dest>  # upload a file/dir to a box
 ./bin/sandbox scp <name> <src>         #   ...omit dest to pick it with the arrow keys

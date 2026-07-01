@@ -20,6 +20,7 @@ _CONFIG_KEYS=(
     SSH_KEY_NAME
     SSH_KEY_FILE
     SSH_USER
+    SSH_USE_CMUX
     AMI_ID
     AUTO_SHUTDOWN_HOURS
     DOTFILES_REPO
@@ -38,6 +39,7 @@ _config_default() {
         SSH_KEY_NAME)             echo "claude-sandbox" ;;
         SSH_KEY_FILE)             echo "${HOME}/.ssh/${SSH_KEY_NAME:-claude-sandbox}.pem" ;;
         SSH_USER)                 echo "ubuntu" ;;
+        SSH_USE_CMUX)             echo "true" ;;
         AMI_ID)                   echo "" ;;
         AUTO_SHUTDOWN_HOURS)      echo "0" ;;
         DOTFILES_REPO)            echo "" ;;

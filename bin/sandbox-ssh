@@ -11,7 +11,7 @@ source "$REPO_ROOT/lib/config.sh"
 # shellcheck source=../lib/aws.sh
 source "$REPO_ROOT/lib/aws.sh"
 
-: "${SSH_CMD:=ssh}"
+: "${CMUX_CMD:=cmux}"
 
 case "${1:-}" in
     -h|--help)
@@ -21,6 +21,10 @@ Usage: sandbox ssh <name>
 Resolve <name> to the running sandbox's public IP via EC2 tags and exec
 ssh into it as $SSH_USER. The SSH key file (-i $SSH_KEY_FILE) and
 IdentitiesOnly=yes are passed automatically when the file is readable.
+
+If cmux is installed and its app is running, the session opens as a cmux
+ssh workspace instead of a plain terminal ssh. Set SSH_USE_CMUX=false in
+./config (or SANDBOX_SSH_USE_CMUX=false) to always use plain ssh.
 EOF
         exit 0
         ;;
@@ -36,7 +40,31 @@ aws_caller_identity
 # a state-specific message if the box is missing/booting/stopped/gone.
 ip="$(aws_resolve_running_sandbox_ip "$name")" || exit 1
 
+# Prefer a cmux ssh workspace over a plain terminal ssh when cmux is
+# installed and its app is reachable. SSH_USE_CMUX=false (./config or
+# SANDBOX_SSH_USE_CMUX) disables this outright; an explicit SSH_CMD (env
+# var, or a test stub) also always wins over auto-detection.
+use_cmux=0
+if [[ "${SSH_USE_CMUX:-true}" == "true" ]] && [[ -z "${SSH_CMD:-}" ]] \
+        && command -v "$CMUX_CMD" >/dev/null 2>&1 && "$CMUX_CMD" ping >/dev/null 2>&1; then
+    SSH_CMD="$CMUX_CMD"
+    use_cmux=1
+fi
+: "${SSH_CMD:=ssh}"
+
 ssh_args=()
+if (( use_cmux )); then
+    # cmux's own parser wants the destination first, then flags; -i becomes
+    # --identity, and there's no IdentitiesOnly shorthand, so pass that
+    # through --ssh-option instead.
+    ssh_args+=("${SSH_USER}@${ip}")
+    if [[ -n "${SSH_KEY_FILE:-}" && -r "$SSH_KEY_FILE" ]]; then
+        ssh_args+=(--identity "$SSH_KEY_FILE" --ssh-option IdentitiesOnly=yes)
+    fi
+    log_info "opening $name in a cmux ssh workspace"
+    exec "$SSH_CMD" ssh "${ssh_args[@]}"
+fi
+
 if [[ -n "${SSH_KEY_FILE:-}" && -r "$SSH_KEY_FILE" ]]; then
     ssh_args+=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes)
 fi

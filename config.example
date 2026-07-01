@@ -19,6 +19,10 @@ SSH_KEY_NAME="claude-sandbox"     # an EC2 key pair you've already created
 SSH_KEY_FILE=""                   # path to the matching local private key
                                   # blank → defaults to ~/.ssh/${SSH_KEY_NAME}.pem
 SSH_USER="ubuntu"
+# If cmux (https://cmux.dev) is installed and its app is running, `sandbox
+# ssh` opens the session as a cmux ssh workspace instead of a plain terminal
+# ssh. Set to false to always use plain ssh.
+SSH_USE_CMUX=true
 
 # ---- SSH ingress for new sandboxes ----
 # Each `up` creates a per-sandbox SG with one rule: allow :22 from this CIDR.
