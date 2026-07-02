@@ -43,6 +43,8 @@ Download (-d / --download):
                 local destination — same as [local-dest], but usable when you
                 omit [remote-src] to browse (no positional slot is left then).
                 e.g.  sandbox scp <name> -d -o ~/Downloads
+                When browsing without -o, you're prompted for the local
+                destination after picking the file (Enter keeps the default).
 
 Browser keys:
   up/down move · right/enter open dir (or choose) · left parent
@@ -264,8 +266,8 @@ if (( download )); then
     # --- download: sandbox -> local ---
     remote_src="${positionals[1]:-}"
     # Local destination: -o/--output wins; else the positional [local-dest];
-    # else the current directory. -o is the way to set it in interactive mode,
-    # where there's no positional slot left for it.
+    # else the current directory (offered as an editable default below when
+    # browsing interactively, since -o is easy to forget going in).
     if (( have_out )); then
         local_dest="$out_dest"
     else
@@ -275,6 +277,25 @@ if (( download )); then
     # No remote-src → pick a file interactively (returns an absolute path).
     if [[ -z "$remote_src" ]]; then
         remote_src="$(browse_remote file "$ip")" || exit 1
+        # -o wasn't given up front, so this is the last chance to redirect the
+        # download away from the default; offer it as an editable prompt
+        # (bare Enter keeps the default). Non-interactively (piped/closed
+        # stdin, e.g. under test) read fails immediately and the default holds.
+        if (( ! have_out )); then
+            reply=""
+            read -e -r -p "local destination [$local_dest]: " reply || true
+            if [[ -n "$reply" ]]; then
+                # read doesn't do shell expansions (unlike a typed command
+                # line), so a leading ~ would otherwise reach scp as a
+                # literal character. Expand the common ~ and ~/path forms
+                # ourselves; deliberately no eval (reply is user-typed text).
+                case "$reply" in
+                    "~")   reply="$HOME" ;;
+                    "~/"*) reply="$HOME/${reply#\~/}" ;;
+                esac
+                local_dest="$reply"
+            fi
+        fi
     fi
 
     # Pass the remote path VERBATIM — do NOT shell-quote it. Modern scp uses the

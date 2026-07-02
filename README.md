@@ -130,8 +130,9 @@ for details on any subcommand.
 ./bin/sandbox scp <name> <src> <dest>  # upload a file/dir to a box
 ./bin/sandbox scp <name> <src>         #   ...omit dest to pick it with the arrow keys
 ./bin/sandbox scp <name> -d <remote> <local>  # download a file FROM a box
-./bin/sandbox scp <name> -d            #   ...omit remote to pick a file with the arrow keys
-./bin/sandbox scp <name> -d -o ~/dl    #   ...with -o/--output to set the local dest
+./bin/sandbox scp <name> -d            #   ...omit remote to pick a file with the arrow keys,
+                                        #      then you're prompted for the local dest (Enter = cwd)
+./bin/sandbox scp <name> -d -o ~/dl    #   ...or set the local dest up front with -o/--output
 
 ./bin/sandbox spot status              # show the standing spot default (USE_SPOT)
 ./bin/sandbox spot off                 # make on-demand the standing default

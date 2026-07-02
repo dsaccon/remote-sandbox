@@ -152,9 +152,36 @@ teardown() { rm -rf "$SANDBOX_REPO_ROOT"; }
     printf '%s\n' "$RUNNING_JSON" > "$AWS_STUB_RESPONSE"
     # ssh stub lists projects/ (dir) then notes.txt (file); down selects the
     # file, Enter picks it. The remote path is passed verbatim (SFTP-literal).
+    # No reply follows for the local-dest prompt, so stdin hits EOF there and
+    # the default (cwd) holds.
     run bash -c "printf '\033[B\r' | '$SANDBOX_REPO_ROOT/bin/sandbox-scp' box -d"
     [ "$status" -eq 0 ]
-    [[ "$output" == *"ubuntu@1.2.3.4:/home/ubuntu/notes.txt"* ]]
+    [[ "$output" == *"SCP_CMD: "*"ubuntu@1.2.3.4:/home/ubuntu/notes.txt ."* ]]
+}
+
+@test "scp -d no remote-src: typing a local dest at the prompt overrides the default" {
+    printf '%s\n' "$RUNNING_JSON" > "$AWS_STUB_RESPONSE"
+    # Same navigation as above (down, Enter picks notes.txt), then the
+    # leftover "/tmp/custom\n" on stdin is read as the local-dest reply.
+    run bash -c "printf '\033[B\r/tmp/custom\n' | '$SANDBOX_REPO_ROOT/bin/sandbox-scp' box -d"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SCP_CMD: "*"ubuntu@1.2.3.4:/home/ubuntu/notes.txt /tmp/custom"* ]]
+}
+
+@test "scp -d no remote-src: '~/path' typed at the prompt expands to \$HOME/path" {
+    printf '%s\n' "$RUNNING_JSON" > "$AWS_STUB_RESPONSE"
+    # read (unlike a typed command line) does not expand ~, so the script must
+    # expand it itself before handing the path to scp.
+    run bash -c "printf '\033[B\r~/Downloads\n' | '$SANDBOX_REPO_ROOT/bin/sandbox-scp' box -d"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SCP_CMD: "*"ubuntu@1.2.3.4:/home/ubuntu/notes.txt $HOME/Downloads"* ]]
+}
+
+@test "scp -d no remote-src: bare '~' typed at the prompt expands to \$HOME" {
+    printf '%s\n' "$RUNNING_JSON" > "$AWS_STUB_RESPONSE"
+    run bash -c "printf '\033[B\r~\n' | '$SANDBOX_REPO_ROOT/bin/sandbox-scp' box -d"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SCP_CMD: "*"ubuntu@1.2.3.4:/home/ubuntu/notes.txt $HOME"* ]]
 }
 
 @test "scp -d: Enter on a directory descends rather than picking it" {
