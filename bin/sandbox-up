@@ -68,6 +68,10 @@ if [[ -z "$NAME" ]]; then
     NAME="sandbox-$(openssl rand -hex 4)"
 fi
 
+# GCP instance/firewall names must be RFC1035 — fail fast, before any
+# gcloud call. AWS names remain unvalidated.
+if [[ "${CLOUD:-aws}" == "gcp" ]]; then gcp_validate_name "$NAME"; fi
+
 # A per-launch flag wins over the config default.
 USE_SPOT_FINAL="${SPOT_OVERRIDE:-$USE_SPOT}"
 

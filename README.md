@@ -71,6 +71,49 @@ aws sts get-caller-identity   # should print your account / IAM user ARN
 ./bin/sandbox build-ami
 ```
 
+## Using GCP
+
+GCP support is newer and lighter-weight than the AWS path — there's no
+AMI-equivalent baking yet (see below).
+
+Prerequisites:
+
+- `gcloud` CLI installed and authenticated for your project.
+- A GCP project (its ID goes in `GCP_PROJECT` below).
+- A service account with permission to create/delete instances and
+  firewall rules (the predefined "Compute Instance Admin" role covers
+  this), with its key downloaded as JSON. Keep it out of git: this repo
+  already ignores `*.key`/`*.pem`, so save it with one of those
+  extensions (e.g. `gcp-key.key`) even though the content is JSON —
+  gcloud only cares about the content, not the filename.
+
+Setup, in addition to the steps above:
+
+```bash
+# .env — point gcloud/ADC at the service account key.
+echo 'GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/gcp-key.key' >> .env
+
+# ./config
+CLOUD="gcp"
+GCP_PROJECT="your-project-id"
+```
+
+`source ./init.sh` picks up `GOOGLE_APPLICATION_CREDENTIALS` from `.env` and
+exports it for `gcloud`, printing `init: GOOGLE_APPLICATION_CREDENTIALS set
+for gcloud` when the path exists.
+
+`up`, `list`, `ssh`, `scp`, `down`, and `spot` all work the same as AWS.
+Two differences to know about:
+
+- **First boot is slow without a baked image.** With `GCP_IMAGE` unset (the
+  default), each `up` boots a stock `ubuntu-2404-lts` instance and runs the
+  full bootstrap at first boot instead of off a pre-baked image — expect
+  ~5-10 minutes before the box is usable, vs. ~60-90s on AWS.
+- **`build-ami` / `list-amis` / `delete-ami` are AWS-only for now.** There's
+  no GCP equivalent yet. For fast boots on GCP, bake a custom image
+  out-of-band (`gcloud compute images create ...` from a bootstrapped
+  instance) and set `GCP_IMAGE` in `./config` to its name.
+
 ## Each new terminal
 
 `aws` CLI and `./bin/sandbox` both read credentials from environment variables.

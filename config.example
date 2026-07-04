@@ -2,8 +2,17 @@
 # your ./config is gitignored.
 
 # ---- Cloud / region ----
-CLOUD="aws"                       # "aws" (only option in v1)
+CLOUD="aws"                       # "aws" | "gcp"
 AWS_REGION="us-west-2"            # Oregon
+
+# ---- GCP (only used when CLOUD=gcp) ----
+GCP_PROJECT=""                    # required for gcp
+GCP_ZONE="us-west1-b"             # gcp is zonal; only the zone is needed
+GCP_IMAGE=""                      # blank → stock ubuntu-2404-lts (bootstrap runs
+                                  # at first boot, ~5-10 min); or a baked image name
+GCP_MACHINE_TYPE="e2-standard-4"  # 4 vCPU / 16 GB, cost-optimized (~m7i-flex.xlarge)
+GCP_SSH_PUBKEY=""                 # SSH *public* key injected at launch;
+                                  # blank → ${SSH_KEY_FILE}.pub
 
 # ---- Instance ----
 INSTANCE_TYPE="m7i-flex.xlarge"   # 16 GB / 4 vCPU recommended

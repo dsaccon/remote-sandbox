@@ -197,3 +197,27 @@ EOF
     [ "$status" -ne 0 ]
     [[ "$output" == *"conflicting --spot/--no-spot"* ]]
 }
+
+@test "up under CLOUD=gcp rejects a non-RFC1035 --name before any launch" {
+    cp "$REPO_ROOT/lib/providers/gcp.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+CLOUD="gcp"
+GCP_PROJECT="p"
+AWS_REGION="us-west-2"
+SSH_KEY_NAME="claude-sandbox"
+SSH_USER="ubuntu"
+INSTANCE_TYPE="m7i-flex.xlarge"
+USE_SPOT="true"
+SPOT_FALLBACK_ON_DEMAND="true"
+AMI_ID="ami-abc"
+AUTO_SHUTDOWN_HOURS="0"
+EOF
+    write_aws_fake
+
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --name Bad_Name
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"RFC1035"* ]]
+    # Rejected before any preflight/launch call — the aws stub's log (used as
+    # a stand-in for "any provider call happened") stays empty.
+    [ ! -s "$AWS_STUB_LOG" ]
+}
