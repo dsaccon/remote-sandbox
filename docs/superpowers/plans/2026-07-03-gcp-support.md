@@ -12,6 +12,7 @@
 
 - **Bash 3.2-clean** — the laptop default; no bash-4 features (no associative arrays, `${x^^}`, etc.). Existing scripts are 3.2-clean; keep them so.
 - **`make lint` (shellcheck) stays clean** across all new/modified files.
+- **`bats` and `shellcheck` are NOT installed on this laptop** (supply-chain policy) — `make test`/`make lint` run in the sandbox/CI, not here. Implementers still *write* the bats tests (they gate in CI), but verify locally by `bash -n` (syntax), direct function/script exercise with `jq` + the `*_CMD` stubs, and running the jq pipelines by hand. Treat every "Run: `bats …`" step in a task as "write the test + verify equivalently by direct exercise." Only `jq`, `git`, `bash`, `aws`, `gcloud`, `curl`, `ssh`/`scp` are available locally.
 - **AWS behavior is unchanged** — every existing `test/unit/*.bats` assertion must still pass (source paths in tests may move, assertions may not).
 - **No new laptop dependencies** beyond the `gcloud` CLI (the GCP control-plane analog of the already-required `aws` CLI).
 - **External-command seams** — every cloud call goes through `$AWS_CMD` / `$GCLOUD_CMD` (default `aws` / `gcloud`) so bats can stub it. Same pattern for `$SSH_CMD`/`$SCP_CMD`/`$CURL_CMD`.
@@ -183,69 +184,49 @@ git commit -m "refactor: extract cloud-agnostic helpers into lib/common.sh"
 
 ---
 
-### Task 3: Provider dispatch + AWS driver
+### Task 3: Provider dispatch + AWS driver (additive — nothing moves)
 
-Relocate the AWS code behind the seam. This is a **move**, not a rewrite: `git mv` the file and absorb `provision.sh`'s AWS-specific functions, then add the thin `provider_*` wrappers. `provider_list`/`terminate`/`cleanup` normalization is Tasks 4–5; here we cover `preflight`, `launch`, `resolve_ip`, `build_image`.
+Introduce the seam **additively**: create `lib/provider.sh` (dispatch) and `lib/providers/aws.sh` (an adapter that sources the existing `lib/provision.sh` — which already pulls in `lib/aws.sh` and, after Task 2, `lib/common.sh` — and exposes the `provider_*` contract). **No file is moved or deleted**, so every existing test and every not-yet-migrated `bin/` script keeps working untouched at each step. The normalized `provider_list`/`terminate`/`cleanup` layer is added in Tasks 4–5; `provider_build_image` is a stub until Task 6.
 
 **Files:**
-- Rename: `lib/aws.sh` → `lib/providers/aws.sh`
-- Modify: `lib/providers/aws.sh` (fix internal `source log.sh` path; absorb AWS funcs from provision.sh; add `provider_*` wrappers)
+- Create: `lib/providers/aws.sh`
 - Create: `lib/provider.sh`
-- Delete: `lib/provision.sh`
-- Test: `test/unit/aws.bats`, `test/unit/preflight.bats`, `test/unit/build-ami.bats` (source-path updates); create `test/unit/provider.bats`
+- Create: `test/unit/provider.bats`
+- (No changes to `lib/aws.sh`, `lib/provision.sh`, or any existing test — they stay put; `providers/aws.sh` adapts them.)
 
 **Interfaces:**
-- Consumes: `lib/common.sh` (Task 2), `lib/config.sh` (`$CLOUD`).
-- Produces: `lib/provider.sh` exposing all `provider_*` (contract table above). AWS driver implements `provider_preflight`, `provider_launch NAME REPO USE_SPOT CIDR`, `provider_resolve_ip NAME`, `provider_build_image`, plus keeps its existing `aws_*` internals and the `$AWS_CMD`/`_aws` seam.
+- Consumes: `lib/provision.sh` (transitively `aws_*`, `preflight_or_die`, `ensure_sg`, `provision_launch`, and `lib/common.sh`), `lib/config.sh` (`$CLOUD`).
+- Produces: `provider_load` (sources the driver for `$CLOUD`); AWS driver defines `provider_check_creds`, `provider_preflight`, `provider_launch NAME REPO USE_SPOT CIDR`, `provider_resolve_ip NAME`, `provider_build_image` (stub → real in Task 6).
 
-- [ ] **Step 1: Move the file**
-
-```bash
-mkdir -p lib/providers
-git mv lib/aws.sh lib/providers/aws.sh
-```
-
-Then in `lib/providers/aws.sh` fix the log source path (it's now one level deeper):
+- [ ] **Step 1: Create `lib/providers/aws.sh`** (adapter over the existing helpers):
 
 ```bash
-_aws_sh_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../log.sh
-source "$_aws_sh_dir/../log.sh"
-```
+#!/usr/bin/env bash
+# lib/providers/aws.sh — AWS driver. Adapts the existing aws.sh/provision.sh
+# helpers to the provider_* contract. Additive: sources them, adds wrappers.
+if [[ -n "${_SANDBOX_PROVIDER_AWS_LOADED:-}" ]]; then return 0; fi
+_SANDBOX_PROVIDER_AWS_LOADED=1
+_paws_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# provision.sh transitively sources log.sh, common.sh (Task 2), and aws.sh.
+# shellcheck source=../provision.sh
+source "$_paws_dir/../provision.sh"
 
-- [ ] **Step 2: Absorb the AWS provisioning functions** — move these from `lib/provision.sh` into `lib/providers/aws.sh` verbatim: `preflight_or_die`, `ensure_sg`, `build_run_instances_json`, `provision_launch`, `_run_instances`. (They already call `aws_*` and `$AWS_CMD`.) `lib/provision.sh` is now empty of logic.
-
-- [ ] **Step 3: Add the `provider_*` wrappers** at the bottom of `lib/providers/aws.sh`:
-
-```bash
 # ---- provider contract (AWS) ----
-provider_preflight() { preflight_or_die; }
-
-provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance id
-    provision_launch "$1" "$2" "$3" "$4"
-}
-
-provider_resolve_ip() { aws_resolve_running_sandbox_ip "$1"; }
-
-provider_build_image() { _aws_build_image; }   # defined in Task 6 (moves sandbox-build-ami body); for now:
-# provider_build_image is wired in Task 6. Leave a stub that dies until then:
+provider_check_creds() { aws_caller_identity; }
+provider_preflight()   { preflight_or_die; }
+provider_launch()      { provision_launch "$1" "$2" "$3" "$4"; }   # -> instance id
+provider_resolve_ip()  { aws_resolve_running_sandbox_ip "$1"; }
+provider_build_image() { die "provider_build_image wired in Task 6"; }  # real impl in Task 6
 ```
 
-Note for the implementer: keep `provider_build_image` as `_aws_build_image` and implement it in Task 6 when `sandbox-build-ami` is refactored. Until then define:
-
-```bash
-provider_build_image() { die "provider_build_image not wired yet"; }
-```
-
-- [ ] **Step 4: Create `lib/provider.sh` (dispatch)**
+- [ ] **Step 2: Create `lib/provider.sh` (dispatch)**
 
 ```bash
 #!/usr/bin/env bash
 # lib/provider.sh — select and load the cloud driver named by $CLOUD, and
-# expose the provider_* contract. Source AFTER config_load (needs $CLOUD).
+# expose the provider_* contract. Call provider_load AFTER config_load.
 if [[ -n "${_SANDBOX_PROVIDER_SH_LOADED:-}" ]]; then return 0; fi
 _SANDBOX_PROVIDER_SH_LOADED=1
-
 _provider_sh_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=log.sh
 source "$_provider_sh_dir/log.sh"
@@ -265,12 +246,7 @@ provider_load() {
 }
 ```
 
-- [ ] **Step 5: Update existing tests' source paths**
-  - `test/unit/aws.bats`: `source "$REPO_ROOT/lib/providers/aws.sh"`
-  - `test/unit/preflight.bats`: copy `lib/{log,config,common}.sh` + `lib/providers/aws.sh`; source `lib/providers/aws.sh` (for `preflight_or_die`/`ensure_sg`).
-  - `test/unit/build-ami.bats`: copy `lib/{log,config,common}.sh` + `lib/providers/aws.sh` (drop `provision`).
-
-- [ ] **Step 6: Write `test/unit/provider.bats`** (dispatch behavior):
+- [ ] **Step 3: Write `test/unit/provider.bats`**:
 
 ```bash
 #!/usr/bin/env bats
@@ -284,32 +260,31 @@ setup() {
     [ "$status" -ne 0 ]
     [[ "$output" == *"unknown CLOUD"* ]]
 }
-@test "provider_load sources the aws driver and defines provider_preflight" {
+@test "provider_load sources the aws driver and defines the contract" {
     CLOUD="aws"
     provider_load
     declare -F provider_preflight >/dev/null
     declare -F provider_launch >/dev/null
+    declare -F provider_resolve_ip >/dev/null
 }
 ```
 
-- [ ] **Step 7: Delete the empty shim**
+- [ ] **Step 4: Verify locally** (bats/shellcheck are absent on this laptop — see Global Constraints; verify by `bash -n` + direct exercise; the bats file runs in CI/sandbox):
 
 ```bash
-git rm lib/provision.sh
+bash -n lib/provider.sh lib/providers/aws.sh
+CLOUD=aws bash -c 'set -e; source lib/provider.sh; provider_load;
+  for f in provider_check_creds provider_preflight provider_launch provider_resolve_ip provider_build_image; do
+    declare -F "$f" >/dev/null || { echo "MISSING $f"; exit 1; }; done; echo OK'
+CLOUD=azure bash -c 'source lib/provider.sh; provider_load'; echo "exit=$? (expect non-zero + unknown CLOUD)"
 ```
+Expected: `OK`; the azure case prints an `unknown CLOUD` error and a non-zero exit. Every existing `bin/` script and test is unchanged and still works (no file was moved).
 
-- [ ] **Step 8: Run the full suite**
-
-Run: `bats test/unit/`
-Expected: PASS — `aws.bats`, `preflight.bats`, `build-ami.bats`, new `provider.bats` green. (bin scripts still source `lib/aws.sh` — fixed in Tasks 4–6; run `make lint` is deferred until then.)
-
-Note: because bin scripts still `source lib/aws.sh` (now gone) they are temporarily broken between Task 3 and Task 6. That's acceptable inside Phase 1 as long as each *task's tests* pass; do not run `make smoke` until Phase 1 completes. If you prefer green bin scripts at every step, do Tasks 3–6 as one commit.
-
-- [ ] **Step 9: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add -A
-git commit -m "refactor: introduce provider seam + AWS driver (lib/provider.sh, lib/providers/aws.sh)"
+git add lib/provider.sh lib/providers/aws.sh test/unit/provider.bats
+git commit -m "refactor: introduce provider seam + AWS driver adapter (lib/provider.sh, lib/providers/aws.sh)"
 ```
 
 ---
@@ -330,7 +305,7 @@ Move the AWS-shaped list logic (status-check batching, SG-ingress batching, `com
 
 ```bash
     mkdir -p "$SANDBOX_REPO_ROOT/lib/providers"
-    cp "$REPO_ROOT"/lib/{log,config,common,provider}.sh "$SANDBOX_REPO_ROOT/lib/"
+    cp "$REPO_ROOT"/lib/{log,config,common,provider,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
     cp "$REPO_ROOT/lib/providers/aws.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
     cp "$REPO_ROOT/bin/sandbox-list" "$SANDBOX_REPO_ROOT/bin/"
 ```
@@ -407,7 +382,7 @@ git commit -m "refactor: AWS provider_list emits normalized records; sandbox-lis
 - Consumes: `provider_list` (Task 4).
 - Produces: `provider_terminate_ids HANDLE...` (AWS: `aws_terminate_instances`), `provider_cleanup_net NAME...` (AWS: delete `<name>-sg`).
 
-- [ ] **Step 1: Update `down.bats` setup** to the new layout (copy `lib/{log,config,common,provider}.sh` + `lib/providers/aws.sh` + `bin/sandbox-down`). Keep existing assertions; adjust any that fed raw multi-call EC2 responses so they exercise the `provider_list`→terminate path (the stub returns the describe JSON `provider_list` issues, then the terminate call is asserted in `AWS_STUB_LOG`).
+- [ ] **Step 1: Update `down.bats` setup** to the new layout (copy `lib/{log,config,common,provider,aws,provision}.sh` + `lib/providers/aws.sh` into `lib/`+`lib/providers/`, plus `bin/sandbox-down`). Keep existing assertions; adjust any that fed raw multi-call EC2 responses so they exercise the `provider_list`→terminate path (the stub returns the describe JSON `provider_list` issues, then the terminate call is asserted in `AWS_STUB_LOG`).
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -512,12 +487,12 @@ config_load
 if [[ "${CLOUD:-aws}" != "aws" ]]; then
     die "image management (list-amis/delete-ami) is only supported on aws (CLOUD=$CLOUD)"
 fi
-aws_caller_identity   # keep — source lib/providers/aws.sh directly here
+aws_caller_identity
 ```
 
-(These two may continue to `source lib/providers/aws.sh` directly since they are AWS-specific; they don't need the dispatcher.)
+(These two are AWS-specific and keep sourcing `lib/aws.sh` unchanged — they don't need the dispatcher. Just add the `CLOUD` guard above.)
 
-- [ ] **Step 5: Update `scp.bats` + `build-ami.bats`** to the new lib layout (copy `lib/{log,config,common,provider}.sh` + `lib/providers/aws.sh`). Keep assertions.
+- [ ] **Step 5: Update `scp.bats`, `build-ami.bats`, and `up.bats`** to the new lib layout — each copies `lib/{log,config,common,provider,aws,provision}.sh` into `lib/` and `lib/providers/aws.sh` into `lib/providers/` (replacing their old `lib/{log,config,aws,provision}.sh` copy line). Keep all existing assertions; the `$AWS_CMD`/`$SSH_CMD`/`$CURL_CMD` stubs are unchanged since AWS still routes through `provision_launch`/`aws_*`.
 
 - [ ] **Step 6: Run the whole suite + lint**
 
