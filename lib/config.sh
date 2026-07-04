@@ -13,6 +13,11 @@ source "$_config_sh_dir/log.sh"
 # Keys we manage. Each gets a default; env-var lookup is SANDBOX_<KEY>.
 _CONFIG_KEYS=(
     CLOUD
+    GCP_PROJECT
+    GCP_ZONE
+    GCP_IMAGE
+    GCP_MACHINE_TYPE
+    GCP_SSH_PUBKEY
     AWS_REGION
     INSTANCE_TYPE
     USE_SPOT
@@ -32,6 +37,11 @@ _CONFIG_KEYS=(
 _config_default() {
     case "$1" in
         CLOUD)                    echo "aws" ;;
+        GCP_PROJECT)              echo "" ;;
+        GCP_ZONE)                 echo "us-west1-b" ;;
+        GCP_IMAGE)                echo "" ;;
+        GCP_MACHINE_TYPE)         echo "e2-standard-4" ;;
+        GCP_SSH_PUBKEY)           echo "" ;;
         AWS_REGION)               echo "us-west-2" ;;
         INSTANCE_TYPE)            echo "m7i-flex.xlarge" ;;
         USE_SPOT)                 echo "true" ;;
