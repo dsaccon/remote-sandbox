@@ -129,8 +129,9 @@ provider_terminate_ids() {
 provider_cleanup_net() {
     local n
     for n in "$@"; do
-        _aws ec2 delete-security-group --group-name "${n}-sg" 2>/dev/null \
-            && log_info "deleted SG ${n}-sg" || true
+        if _aws ec2 delete-security-group --group-name "${n}-sg" 2>/dev/null; then
+            log_info "deleted SG ${n}-sg"
+        fi
     done
 }
 

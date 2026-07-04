@@ -63,7 +63,7 @@ provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
     local name="$1" repo="$2" use_spot="$3" cidr="$4"
     local zone="$GCP_ZONE" hours="${AUTO_SHUTDOWN_HOURS:-0}"
     local pub="${GCP_SSH_PUBKEY:-${SSH_KEY_FILE}.pub}"
-    local owner="${USER:-unknown}@$(hostname -s 2>/dev/null || hostname)"
+    local owner; owner="${USER:-unknown}@$(hostname -s 2>/dev/null || hostname)"
 
     # per-sandbox firewall (global object, scoped by target tag)
     _gcloud compute firewall-rules create "${name}-fw" \
@@ -171,7 +171,8 @@ provider_terminate_ids() {   # NAME...
 provider_cleanup_net() {     # NAME...
     local n
     for n in "$@"; do
-        _gcloud compute firewall-rules delete "${n}-fw" --quiet 2>/dev/null \
-            && log_info "deleted firewall ${n}-fw" || true
+        if _gcloud compute firewall-rules delete "${n}-fw" --quiet 2>/dev/null; then
+            log_info "deleted firewall ${n}-fw"
+        fi
     done
 }
