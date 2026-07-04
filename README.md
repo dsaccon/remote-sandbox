@@ -80,12 +80,16 @@ Prerequisites:
 
 - `gcloud` CLI installed and authenticated for your project.
 - A GCP project (its ID goes in `GCP_PROJECT` below).
-- A service account with permission to create/delete instances and
-  firewall rules (the predefined "Compute Instance Admin" role covers
-  this), with its key downloaded as JSON. Keep it out of git: this repo
-  already ignores `*.key`/`*.pem`, so save it with one of those
-  extensions (e.g. `gcp-key.key`) even though the content is JSON —
-  gcloud only cares about the content, not the filename.
+- A service account with permission to create/delete both instances and
+  firewall rules. `up` creates a per-sandbox firewall rule (and `down`
+  deletes it), so instance permissions alone aren't enough. Least-privilege
+  is two predefined roles: `roles/compute.instanceAdmin.v1` (instances) plus
+  `roles/compute.securityAdmin` (firewall rules). Simpler but broader:
+  the single `roles/compute.admin` role covers both. Download the account's
+  key as JSON and keep it out of git: this repo already ignores
+  `*.key`/`*.pem`, so save it with one of those extensions (e.g.
+  `gcp-key.key`) even though the content is JSON — gcloud only cares about
+  the content, not the filename.
 
 Setup, in addition to the steps above:
 
