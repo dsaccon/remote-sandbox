@@ -138,6 +138,12 @@ Move the three provider-neutral helpers out of `lib/provision.sh` so both driver
 - Create: `lib/common.sh`
 - Modify: `lib/provision.sh` (remove the 3 functions; source `common.sh` at top)
 - Test: `test/unit/cloud-init.bats` (source `common.sh` instead of `provision.sh`)
+- Test: `test/unit/{preflight,up,build-ami}.bats` — because `provision.sh` now
+  sources `common.sh`, every isolated-dir test that copies `provision.sh` into a
+  temp `lib/` must also copy `common.sh`. Add `common` to each of their `cp
+  "$REPO_ROOT"/lib/{...}.sh` brace-lists (→ `{log,config,common,aws,provision}.sh`).
+  (Without this, sourcing `provision.sh` in the temp dir fails to find
+  `common.sh` and those suites break at this task.)
 
 **Interfaces:**
 - Produces: `render_cloud_init NAME REPO HOURS`, `resolve_ssh_cidr [OVERRIDE]`, `current_public_ip_cidr` — identical signatures/behavior to today.
