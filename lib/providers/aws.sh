@@ -15,6 +15,26 @@ provider_launch()      { provision_launch "$1" "$2" "$3" "$4"; }   # -> instance
 provider_resolve_ip()  { aws_resolve_running_sandbox_ip "$1"; }
 provider_build_image() { die "provider_build_image wired in Task 6"; }  # real impl in Task 6
 
+# provider_terminate_ids HANDLE... — terminate instances by id. No-op on
+# empty args (bash 3.2: "$@" with zero args is safe, an empty array literal
+# is not).
+provider_terminate_ids() {
+    [[ $# -eq 0 ]] && return 0
+    aws_terminate_instances "$@" >/dev/null
+}
+
+# provider_cleanup_net NAME... — best-effort delete of each <NAME>-sg.
+# Per-sandbox SGs are named this way by `up`. Failures are silent and
+# expected: legacy sandboxes share the old SG (no -sg variant exists) and
+# freshly-terminated instances still hold the SG via their ENI for ~60s.
+provider_cleanup_net() {
+    local n
+    for n in "$@"; do
+        _aws ec2 delete-security-group --group-name "${n}-sg" 2>/dev/null \
+            && log_info "deleted SG ${n}-sg" || true
+    done
+}
+
 # Returns the display STATE for a sandbox combining AWS state + status checks.
 # Values: pending | initializing | ready | impaired | running | stopping |
 #         stopped | shutting-down | terminated
