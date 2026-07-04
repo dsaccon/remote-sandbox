@@ -55,3 +55,19 @@ set_response() { local rc="$1"; shift; { echo "$rc"; printf '%s' "$*"; } > "$GCL
     grep -q -- 'max-run-duration=8h' "$GCLOUD_STUB_LOG"
     grep -q -- 'instance-termination-action=DELETE' "$GCLOUD_STUB_LOG"
 }
+
+@test "provider_list emits a normalized row" {
+    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+0
+[{"name":"sandbox-abc","status":"RUNNING","machineType":"https://.../machineTypes/e2-standard-4",
+  "creationTimestamp":"2026-07-03T10:00:00.000-07:00",
+  "scheduling":{"provisioningModel":"SPOT"},
+  "networkInterfaces":[{"accessConfigs":[{"natIP":"5.6.7.8"}]}],
+  "metadata":{"items":[{"key":"auto-shutdown-hours","value":"8"}]},
+  "tags":{"items":["sandbox-abc"]}}]
+EOF
+    run provider_list
+    [ "$status" -eq 0 ]
+    # handle name state type market ... ip ... ash
+    [[ "$output" == *"sandbox-abc"*"ready"*"e2-standard-4"*"spot"*"5.6.7.8"*"8"* ]]
+}

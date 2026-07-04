@@ -99,3 +99,50 @@ provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
     log_info "requesting gcp instance ($GCP_MACHINE_TYPE, spot=$use_spot)..."
     _gcloud "${args[@]}"
 }
+
+# gcp_ts_to_epoch RFC3339 -> unix epoch (best-effort; falls back to now).
+gcp_ts_to_epoch() {
+    local ts="$1"; ts="${ts//Z/+00:00}"
+    local off="${ts: -6}" body="${ts:0:${#ts}-6}"
+    body="${body%.*}"                       # strip fractional seconds
+    date -j -f "%Y-%m-%dT%H:%M:%S%z" "${body}${off/:/}" +%s 2>/dev/null \
+        || date -d "${body}${off}" +%s 2>/dev/null \
+        || date -u +%s
+}
+
+# gcp_map_state GCE_STATUS -> normalized state.
+gcp_map_state() {
+    case "$1" in
+        PROVISIONING|STAGING) echo initializing ;;
+        RUNNING)              echo ready ;;
+        STOPPING)             echo stopping ;;
+        TERMINATED)           echo stopped ;;
+        *)                    echo running ;;
+    esac
+}
+
+provider_list() {
+    local inst fw
+    inst="$(_gcloud compute instances list \
+        --filter="labels.project=claude-sandbox" --zones="$GCP_ZONE" --format=json 2>/dev/null || echo '[]')"
+    fw="$(_gcloud compute firewall-rules list \
+        --filter="name~-fw$" --format=json 2>/dev/null || echo '[]')"
+    # jq emits: name rawstatus machinetype market rawts ip ash allowed
+    printf '%s' "$inst" | jq -r --argjson fw "$fw" '
+        ($fw | map({(.targetTags[0] // ""): (.sourceRanges[0] // "-")}) | add // {}) as $cidr |
+        .[] | [
+            .name,
+            .status,
+            (.machineType | split("/") | last),
+            (if .scheduling.provisioningModel=="SPOT" then "spot" else "on-demand" end),
+            .creationTimestamp,
+            (.networkInterfaces[0].accessConfigs[0].natIP // "-"),
+            ((.metadata.items // [] | map(select(.key=="auto-shutdown-hours")) | .[0].value) // "-"),
+            ($cidr[.name] // "-")
+        ] | @tsv
+    ' | while IFS=$'\t' read -r name rawstatus mtype market rawts ip ash cidr; do
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$name" "$name" "$(gcp_map_state "$rawstatus")" "$mtype" "$market" \
+            "$(gcp_ts_to_epoch "$rawts")" "$ip" "$cidr" "$ash"
+    done
+}
