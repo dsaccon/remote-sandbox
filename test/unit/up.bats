@@ -4,7 +4,7 @@ setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     export SANDBOX_REPO_ROOT="$(mktemp -d)"
     mkdir -p "$SANDBOX_REPO_ROOT/lib" "$SANDBOX_REPO_ROOT/ami" "$SANDBOX_REPO_ROOT/bin"
-    cp "$REPO_ROOT"/lib/{log,config,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    cp "$REPO_ROOT"/lib/{log,config,common,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
     cp "$REPO_ROOT/ami/cloud-init.yaml.tmpl" "$SANDBOX_REPO_ROOT/ami/"
     cp "$REPO_ROOT/bin/sandbox-up" "$SANDBOX_REPO_ROOT/bin/"
     cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
