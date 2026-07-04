@@ -146,3 +146,32 @@ provider_list() {
             "$(gcp_ts_to_epoch "$rawts")" "$ip" "$cidr" "$ash"
     done
 }
+
+provider_resolve_ip() {   # NAME -> IP or die
+    local name="$1" json status ip
+    json="$(_gcloud compute instances describe "$name" --zone="$GCP_ZONE" --format=json 2>/dev/null || true)"
+    [[ -z "$json" ]] && die "no sandbox named $name in $GCP_ZONE (try ./bin/sandbox list)"
+    status="$(printf '%s' "$json" | jq -r '.status // empty')"
+    case "$status" in
+        PROVISIONING|STAGING) die "sandbox $name is still booting (status: $status). Try again shortly." ;;
+        STOPPING|TERMINATED)  die "sandbox $name is $status — halted or gone. Up a fresh one." ;;
+        RUNNING) : ;;
+        *) die "sandbox $name is in unexpected status '$status'" ;;
+    esac
+    ip="$(printf '%s' "$json" | jq -r '.networkInterfaces[0].accessConfigs[0].natIP // empty')"
+    [[ -n "$ip" ]] || die "sandbox $name is running but has no external IP yet — check './bin/sandbox list'"
+    printf '%s' "$ip"
+}
+
+provider_terminate_ids() {   # NAME...
+    [[ $# -eq 0 ]] && return 0
+    _gcloud compute instances delete "$@" --zone="$GCP_ZONE" --quiet >/dev/null
+}
+
+provider_cleanup_net() {     # NAME...
+    local n
+    for n in "$@"; do
+        _gcloud compute firewall-rules delete "${n}-fw" --quiet 2>/dev/null \
+            && log_info "deleted firewall ${n}-fw" || true
+    done
+}

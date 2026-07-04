@@ -71,3 +71,29 @@ EOF
     # handle name state type market ... ip ... ash
     [[ "$output" == *"sandbox-abc"*"ready"*"e2-standard-4"*"spot"*"5.6.7.8"*"8"* ]]
 }
+
+@test "provider_resolve_ip returns the natIP for a RUNNING box" {
+    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+0
+{"status":"RUNNING","networkInterfaces":[{"accessConfigs":[{"natIP":"5.6.7.8"}]}]}
+EOF
+    run provider_resolve_ip sandbox-abc
+    [ "$status" -eq 0 ]
+    [ "$output" = "5.6.7.8" ]
+}
+@test "provider_resolve_ip dies for a booting box" {
+    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+0
+{"status":"PROVISIONING","networkInterfaces":[{"accessConfigs":[{}]}]}
+EOF
+    run provider_resolve_ip sandbox-abc
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"booting"* ]]
+}
+@test "provider_terminate_ids deletes by name+zone" {
+    set_response 0 ''
+    run provider_terminate_ids sandbox-abc
+    [ "$status" -eq 0 ]
+    grep -q -- 'compute instances delete sandbox-abc' "$GCLOUD_STUB_LOG"
+    grep -q -- 'zone=us-west1-b' "$GCLOUD_STUB_LOG"
+}
