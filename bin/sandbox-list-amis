@@ -40,6 +40,9 @@ EOF
 esac
 
 config_load
+if [[ "${CLOUD:-aws}" != "aws" ]]; then
+    die "image management (list-amis/delete-ami) is only supported on aws (CLOUD=$CLOUD)"
+fi
 aws_caller_identity
 
 json="$(aws_describe_self_amis)"

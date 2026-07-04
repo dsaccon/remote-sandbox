@@ -8,8 +8,8 @@ REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$REPO_ROOT/lib/log.sh"
 # shellcheck source=../lib/config.sh
 source "$REPO_ROOT/lib/config.sh"
-# shellcheck source=../lib/aws.sh
-source "$REPO_ROOT/lib/aws.sh"
+# shellcheck source=../lib/provider.sh
+source "$REPO_ROOT/lib/provider.sh"
 
 : "${CMUX_CMD:=cmux}"
 
@@ -34,11 +34,12 @@ esac
 name="$1"
 
 config_load
-aws_caller_identity
+provider_load
+provider_check_creds
 
 # Resolve <name> to the running box's public IP (shared with `scp`). Dies with
 # a state-specific message if the box is missing/booting/stopped/gone.
-ip="$(aws_resolve_running_sandbox_ip "$name")" || exit 1
+ip="$(provider_resolve_ip "$name")" || exit 1
 
 # Prefer a cmux ssh workspace over a plain terminal ssh when cmux is
 # installed and its app is reachable. SSH_USE_CMUX=false (./config or

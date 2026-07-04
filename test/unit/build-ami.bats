@@ -3,8 +3,9 @@
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     export SANDBOX_REPO_ROOT="$(mktemp -d)"
-    mkdir -p "$SANDBOX_REPO_ROOT/lib" "$SANDBOX_REPO_ROOT/ami/systemd" "$SANDBOX_REPO_ROOT/bin"
-    cp "$REPO_ROOT"/lib/{log,config,common,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    mkdir -p "$SANDBOX_REPO_ROOT/lib/providers" "$SANDBOX_REPO_ROOT/ami/systemd" "$SANDBOX_REPO_ROOT/bin"
+    cp "$REPO_ROOT"/lib/{log,config,common,provider,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    cp "$REPO_ROOT/lib/providers/aws.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
     cp "$REPO_ROOT/ami/bootstrap.sh" "$SANDBOX_REPO_ROOT/ami/"
     cp "$REPO_ROOT"/ami/systemd/*.{service,timer} "$SANDBOX_REPO_ROOT/ami/systemd/"
     cp "$REPO_ROOT/bin/sandbox-build-ami" "$SANDBOX_REPO_ROOT/bin/"

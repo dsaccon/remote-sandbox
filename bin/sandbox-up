@@ -8,10 +8,8 @@ REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$REPO_ROOT/lib/log.sh"
 # shellcheck source=../lib/config.sh
 source "$REPO_ROOT/lib/config.sh"
-# shellcheck source=../lib/aws.sh
-source "$REPO_ROOT/lib/aws.sh"
-# shellcheck source=../lib/provision.sh
-source "$REPO_ROOT/lib/provision.sh"
+# shellcheck source=../lib/provider.sh
+source "$REPO_ROOT/lib/provider.sh"
 
 usage() {
     cat <<'EOF'
@@ -61,6 +59,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 config_load
+provider_load
 
 # Default name = sandbox-<8 hex chars>. Use openssl rather than
 # `tr ... </dev/urandom | head -c8` because under `set -o pipefail` head
@@ -72,11 +71,11 @@ fi
 # A per-launch flag wins over the config default.
 USE_SPOT_FINAL="${SPOT_OVERRIDE:-$USE_SPOT}"
 
-preflight_or_die
+provider_preflight
 
 ssh_cidr="$(resolve_ssh_cidr "$SSH_CIDR_FLAG")"
 
-read -r id < <(provision_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL" "$ssh_cidr")
+read -r id < <(provider_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL" "$ssh_cidr")
 
 if [[ "${AUTO_SHUTDOWN_HOURS:-0}" -gt 0 ]]; then
     shutdown_note="Auto-shutdown in ${AUTO_SHUTDOWN_HOURS}h."
