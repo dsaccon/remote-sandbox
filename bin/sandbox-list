@@ -8,8 +8,8 @@ REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$REPO_ROOT/lib/log.sh"
 # shellcheck source=../lib/config.sh
 source "$REPO_ROOT/lib/config.sh"
-# shellcheck source=../lib/aws.sh
-source "$REPO_ROOT/lib/aws.sh"
+# shellcheck source=../lib/provider.sh
+source "$REPO_ROOT/lib/provider.sh"
 
 only_active=0
 case "${1:-}" in
@@ -44,111 +44,27 @@ EOF
 esac
 
 config_load
-aws_caller_identity
+provider_load
+provider_check_creds
 
-# Returns the display STATE for a sandbox combining AWS state + status checks.
-# Values: pending | initializing | ready | impaired | running | stopping |
-#         stopped | shutting-down | terminated
-compute_display_state() {
-    local state="$1" inst_status="$2" sys_status="$3"
-    if [[ "$state" != "running" ]]; then
-        printf '%s' "$state"
-        return
-    fi
-    if [[ "$inst_status" == "ok" && "$sys_status" == "ok" ]]; then
-        printf '%s' "ready"
-    elif [[ "$inst_status" == "impaired" || "$sys_status" == "impaired" ]]; then
-        printf '%s' "impaired"
-    elif [[ "$inst_status" == "initializing" || "$sys_status" == "initializing" || -z "$inst_status" || -z "$sys_status" ]]; then
-        printf '%s' "initializing"
-    else
-        # All checks present and neither ok nor initializing nor impaired
-        # (e.g. insufficient-data, not-applicable) — fall back to plain "running".
-        printf '%s' "running"
-    fi
-}
-
-# Include shutting-down + terminated so users can watch the full lifecycle
-# after `sandbox down`. AWS purges terminated instances after ~1 hour, so
-# they don't accumulate forever.
-json="$(aws_describe_instances_by_tag Project claude-sandbox \
-    'pending,running,stopping,stopped,shutting-down,terminated')"
-count="$(printf '%s' "$json" | jq '[.Reservations[].Instances[]] | length')"
-if [[ "$count" -eq 0 ]]; then
+rows="$(provider_list)"
+if [[ -z "$rows" ]]; then
     echo "no sandboxes in $AWS_REGION"
     exit 0
-fi
-
-# Get instance-status for every running instance in one batch call.
-running_ids=()
-while IFS= read -r rid; do
-    [[ -z "$rid" ]] && continue
-    running_ids+=("$rid")
-done < <(printf '%s' "$json" | jq -r '.Reservations[].Instances[] | select(.State.Name=="running") | .InstanceId')
-
-if [[ ${#running_ids[@]} -gt 0 ]]; then
-    status_json="$(aws_describe_instance_status_for "${running_ids[@]}")"
-else
-    status_json='{"InstanceStatuses":[]}'
-fi
-
-# Collect every SG ID across all instances so we can batch-fetch ingress
-# rules in one call and look them up per-instance in jq below.
-sg_ids=()
-while IFS= read -r sg; do
-    [[ -z "$sg" ]] && continue
-    sg_ids+=("$sg")
-done < <(printf '%s' "$json" | jq -r '[.Reservations[].Instances[].SecurityGroups[]?.GroupId] | unique[]')
-
-if [[ ${#sg_ids[@]} -gt 0 ]]; then
-    sg_json="$(aws_describe_sgs_by_ids "${sg_ids[@]}")"
-else
-    sg_json='{"SecurityGroups":[]}'
 fi
 
 # Header — STATE column widened to 14 to fit "initializing" / "shutting-down".
 printf '%-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' NAME STATE TYPE MARKET AGE EXPIRES IP ALLOWED
 
 now_epoch="$(date -u +%s)"
-# Join instance data with status data + SG ingress in jq. ALLOWED shows the
-# first :22 CIDR found across the instance's SGs; "-" if none configured.
-printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg_json" '
-    ($statuses.InstanceStatuses // [] | INDEX(.InstanceId)) as $sm |
-    ($sgs.SecurityGroups // [] | INDEX(.GroupId)) as $sgm |
-    .Reservations[].Instances[] |
-    [
-        ((.Tags // []) | map(select(.Key=="Name")) | .[0].Value // .InstanceId),
-        .State.Name,
-        .InstanceType,
-        .LaunchTime,
-        (.PublicIpAddress // "-"),
-        ($sm[.InstanceId].InstanceStatus.Status // "-"),
-        ($sm[.InstanceId].SystemStatus.Status // "-"),
-        ([
-            .SecurityGroups[]?.GroupId
-            | $sgm[.]?
-            | (.IpPermissions[]? | select(.IpProtocol=="tcp" and .FromPort==22) | .IpRanges[]?.CidrIp)
-        ] | .[0] // "-"),
-        ((.Tags // []) | map(select(.Key=="AutoShutdownHours")) | .[0].Value // "-"),
-        (if .InstanceLifecycle=="spot" then "spot" else "on-demand" end)
-    ] | @tsv
-' | while IFS=$'\t' read -r name state type launch ip inst_status sys_status cidr shutdown_hours market; do
-    # `read -r` with IFS=$'\t' treats runs of tabs as one separator (tab is
-    # an IFS-whitespace char), so when both status fields are empty the
-    # cidr column gets eaten. jq emits "-" placeholders to keep field
-    # positions stable; translate back to "" here for compute_display_state.
-    [[ "$inst_status" == "-" ]] && inst_status=""
-    [[ "$sys_status" == "-" ]] && sys_status=""
-    launch_epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "${launch%.*}" "+%s" 2>/dev/null \
-        || date -u -d "$launch" "+%s" 2>/dev/null || echo "$now_epoch")"
+printf '%s\n' "$rows" | while IFS=$'\t' read -r handle name state type market launch_epoch ip cidr shutdown_hours; do
     age_sec=$(( now_epoch - launch_epoch ))
     if (( age_sec < 3600 )); then
         age="$(( age_sec / 60 ))m"
     else
         age="$(( age_sec / 3600 ))h$(( (age_sec % 3600) / 60 ))m"
     fi
-    display_state="$(compute_display_state "$state" "$inst_status" "$sys_status")"
-    if [[ "$only_active" -eq 1 && "$display_state" != "ready" ]]; then
+    if [[ "$only_active" -eq 1 && "$state" != "ready" ]]; then
         continue
     fi
 
@@ -171,5 +87,5 @@ printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg
             ;;
     esac
     printf '%-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' \
-        "$name" "$display_state" "$type" "$market" "$age" "$expires" "$ip" "$cidr"
+        "$name" "$state" "$type" "$market" "$age" "$expires" "$ip" "$cidr"
 done
