@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Empty gcloud stub — records calls, returns whatever fixture file says.
+# Test writes its desired exit code and stdout into $GCLOUD_STUB_RESPONSE before
+# invoking, then reads $GCLOUD_STUB_LOG to assert on calls.
+
+: "${GCLOUD_STUB_LOG:?stub log path not set}"
+printf '%s\n' "$*" >> "$GCLOUD_STUB_LOG"
+
+if [[ -n "${GCLOUD_STUB_RESPONSE:-}" && -f "$GCLOUD_STUB_RESPONSE" ]]; then
+    rc="$(head -n1 "$GCLOUD_STUB_RESPONSE")"
+    tail -n +2 "$GCLOUD_STUB_RESPONSE"
+    exit "$rc"
+fi
+exit 0
