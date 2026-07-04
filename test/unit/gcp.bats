@@ -31,3 +31,27 @@ set_response() { local rc="$1"; shift; { echo "$rc"; printf '%s' "$*"; } > "$GCL
     [ "$status" -ne 0 ]
     [[ "$output" == *"not yet supported"* ]]
 }
+
+@test "provider_launch creates a per-sandbox firewall rule and an instance" {
+    set_response 0 ''    # gcloud calls succeed, empty output
+    GCP_SSH_PUBKEY="$BATS_TEST_TMPDIR/id.pub"; echo "ssh-ed25519 AAAA test" > "$GCP_SSH_PUBKEY"
+    AUTO_SHUTDOWN_HOURS=0
+    run provider_launch sandbox-abc "" false "1.2.3.4/32"
+    [ "$status" -eq 0 ]
+    grep -q -- 'compute firewall-rules create sandbox-abc-fw' "$GCLOUD_STUB_LOG"
+    grep -q -- 'source-ranges=1.2.3.4/32' "$GCLOUD_STUB_LOG"
+    grep -q -- 'target-tags=sandbox-abc' "$GCLOUD_STUB_LOG"
+    grep -q -- 'compute instances create sandbox-abc' "$GCLOUD_STUB_LOG"
+    grep -q -- 'labels=project=claude-sandbox,name=sandbox-abc' "$GCLOUD_STUB_LOG"
+}
+
+@test "provider_launch adds spot + max-run-duration flags when requested" {
+    set_response 0 ''
+    GCP_SSH_PUBKEY="$BATS_TEST_TMPDIR/id.pub"; echo "ssh-ed25519 AAAA test" > "$GCP_SSH_PUBKEY"
+    AUTO_SHUTDOWN_HOURS=8
+    run provider_launch sandbox-abc "" true "1.2.3.4/32"
+    [ "$status" -eq 0 ]
+    grep -q -- 'provisioning-model=SPOT' "$GCLOUD_STUB_LOG"
+    grep -q -- 'max-run-duration=8h' "$GCLOUD_STUB_LOG"
+    grep -q -- 'instance-termination-action=DELETE' "$GCLOUD_STUB_LOG"
+}

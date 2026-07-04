@@ -6,8 +6,11 @@ _SANDBOX_GCP_SH_LOADED=1
 _gcp_sh_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../log.sh
 source "$_gcp_sh_dir/../log.sh"
+_gcp_repo_bootstrap="$(cd "$_gcp_sh_dir/../.." && pwd)/ami/bootstrap.sh"
 
 : "${GCLOUD_CMD:=gcloud}"
+: "${GCP_IMAGE_FAMILY:=ubuntu-2404-lts-amd64}"
+: "${GCP_IMAGE_PROJECT:=ubuntu-os-cloud}"
 _gcloud() {
     : "${GCP_PROJECT:?_gcloud: GCP_PROJECT not set}"
     "$GCLOUD_CMD" --project "$GCP_PROJECT" "$@"
@@ -40,4 +43,59 @@ provider_preflight() {
 
 provider_build_image() {
     die "image baking not yet supported on gcp — bake out-of-band and set GCP_IMAGE (see docs)"
+}
+
+# gcp_render_startup NAME REPO -> startup-script text on stdout.
+# No baked image: run ami/bootstrap.sh at first boot, then optional clone.
+# Baked image (GCP_IMAGE set): just hostname + optional clone.
+gcp_render_startup() {
+    local name="$1" repo="$2"
+    printf '#!/usr/bin/env bash\nset -e\nhostnamectl set-hostname %s || true\n' "$name"
+    if [[ -z "${GCP_IMAGE:-}" ]]; then
+        printf 'export DOTFILES_REPO=%q CLAUDE_HARDENING_REPO=%q\n' \
+            "${DOTFILES_REPO:-}" "${CLAUDE_HARDENING_REPO:-}"
+        cat "$_gcp_repo_bootstrap"     # ami/bootstrap.sh body, inlined
+    fi
+    [[ -n "$repo" ]] && printf 'sudo -u %s -i bash -c %q\n' "${SSH_USER:-ubuntu}" "git clone $repo"
+}
+
+provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
+    local name="$1" repo="$2" use_spot="$3" cidr="$4"
+    local zone="$GCP_ZONE" hours="${AUTO_SHUTDOWN_HOURS:-0}"
+    local pub="${GCP_SSH_PUBKEY:-${SSH_KEY_FILE}.pub}"
+    local owner="${USER:-unknown}@$(hostname -s 2>/dev/null || hostname)"
+
+    # per-sandbox firewall (global object, scoped by target tag)
+    _gcloud compute firewall-rules create "${name}-fw" \
+        --network=default --direction=INGRESS --action=ALLOW \
+        --rules=tcp:22 --source-ranges="$cidr" --target-tags="$name" >/dev/null
+    log_info "firewall: ${name}-fw  SSH ingress = $cidr"
+
+    # metadata files: ssh-keys + startup-script (+ user-data if baked image uses cloud-init)
+    local kf sf; kf="$(mktemp)"; sf="$(mktemp)"
+    trap 'rm -f "$kf" "$sf"' RETURN
+    printf '%s:%s\n' "${SSH_USER:-ubuntu}" "$(cat "$pub")" > "$kf"
+    gcp_render_startup "$name" "$repo" > "$sf"
+
+    local args=(compute instances create "$name" --zone="$zone"
+        --machine-type="${GCP_MACHINE_TYPE}"
+        --tags="$name"
+        --labels="project=claude-sandbox,name=$name"
+        --metadata="owner=$owner,auto-shutdown-hours=$hours"
+        --metadata-from-file="ssh-keys=$kf,startup-script=$sf"
+        --format="value(name)")
+    if [[ -n "${GCP_IMAGE:-}" ]]; then
+        args+=(--image="$GCP_IMAGE")
+    else
+        args+=(--image-family="$GCP_IMAGE_FAMILY" --image-project="$GCP_IMAGE_PROJECT")
+    fi
+    [[ "$use_spot" == "true" ]] && args+=(--provisioning-model=SPOT)
+    if [[ "$hours" -gt 0 ]]; then
+        args+=(--max-run-duration="${hours}h" --instance-termination-action=DELETE)
+    elif [[ "$use_spot" == "true" ]]; then
+        args+=(--instance-termination-action=DELETE)   # clean up on preemption
+    fi
+
+    log_info "requesting gcp instance ($GCP_MACHINE_TYPE, spot=$use_spot)..."
+    _gcloud "${args[@]}"
 }
