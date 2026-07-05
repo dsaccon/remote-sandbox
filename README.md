@@ -149,9 +149,11 @@ Tab completion covers:
 ./bin/sandbox down --stale <TAB># → 30m | 1h | 4h | 12h | 24h | 48h | 7d
 ```
 
-Name suggestions query EC2 each Tab press (~200-500ms latency). Bake VMs
-(`sandbox-bake-...`) are filtered out — only your real sandboxes appear.
-Re-source `init.sh` after pulling updates that touch `completion/sandbox.sh`.
+Name suggestions query the **active cloud** (`CLOUD` in `./config`) each Tab
+press (~200-500ms latency) — EC2 when `CLOUD=aws`, GCE when `CLOUD=gcp` — so the
+names offered for `ssh`/`scp`/`down` match the boxes those commands can reach.
+(Bake VMs are filtered out on AWS.) Re-source `init.sh` after pulling updates
+that touch `completion/sandbox.sh`.
 
 ## Commands
 

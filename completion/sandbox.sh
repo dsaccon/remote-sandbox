@@ -21,19 +21,43 @@
 
 # --- Shared between both shells: live name / AMI lookups via the aws CLI. -----
 
+# _sandbox_cfg KEY — best-effort read of KEY's value from ./config (quotes,
+# trailing comment, and spaces stripped). Empty if unreadable/absent. Works in
+# both bash and zsh (plain parameter expansion, no shell-specific syntax).
+_sandbox_cfg() {
+    [[ -r "$_sandbox_config" ]] || return 0
+    local v
+    v="$(grep -E "^[[:space:]]*$1=" "$_sandbox_config" 2>/dev/null | head -1)"
+    v="${v#*=}"      # value after KEY=
+    v="${v%%#*}"     # strip trailing comment
+    v="${v//\"/}"    # strip double quotes
+    v="${v// /}"     # strip spaces
+    printf '%s' "$v"
+}
+
+# _sandbox_list_names — live sandbox names for the ACTIVE cloud (ssh/scp/down
+# all operate on CLOUD, so completion matches what they can reach). Silent
+# failure → empty output, so completion just doesn't enumerate.
 _sandbox_list_names() {
-    # Query EC2 for sandbox names. Emit two columns (Name, BakeRole) per
-    # instance and filter out bake VMs in awk — JMESPath's `!Tags[?...]`
-    # negation is unreliable. Silent failure → empty output so completion
-    # just doesn't enumerate, rather than erroring.
-    local region="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
-    aws ec2 describe-instances --region "$region" \
-        --filters \
-            'Name=tag:Project,Values=claude-sandbox' \
-            'Name=instance-state-name,Values=pending,running,stopping,stopped' \
-        --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value | [0], Tags[?Key==`BakeRole`].Value | [0]]' \
-        --output text 2>/dev/null \
-        | awk '$2 == "None" { print $1 }'
+    local cloud; cloud="$(_sandbox_cfg CLOUD)"; cloud="${cloud:-aws}"
+    if [[ "$cloud" == "gcp" ]]; then
+        local proj; proj="$(_sandbox_cfg GCP_PROJECT)"
+        [[ -z "$proj" ]] && return 0
+        gcloud compute instances list --project "$proj" \
+            --filter="labels.project=claude-sandbox" \
+            --format="value(name)" 2>/dev/null
+    else
+        # Emit (Name, BakeRole) and drop bake VMs in awk — JMESPath negation is
+        # unreliable.
+        local region="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
+        aws ec2 describe-instances --region "$region" \
+            --filters \
+                'Name=tag:Project,Values=claude-sandbox' \
+                'Name=instance-state-name,Values=pending,running,stopping,stopped' \
+            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value | [0], Tags[?Key==`BakeRole`].Value | [0]]' \
+            --output text 2>/dev/null \
+            | awk '$2 == "None" { print $1 }'
+    fi
 }
 
 _sandbox_list_amis() {
@@ -49,6 +73,9 @@ _sandbox_list_amis() {
 # Directory of THIS file, so the zsh branch can find sandbox.zsh. Resolves in
 # both shells: bash via BASH_SOURCE, zsh via $0 of the sourced file.
 _sandbox_comp_dir="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# Path to ./config, resolved at source time and kept (NOT unset like
+# _sandbox_comp_dir below) so _sandbox_cfg can read it when completion runs.
+_sandbox_config="${_sandbox_comp_dir%/*}/config"
 
 if [[ -n "${ZSH_VERSION:-}" ]]; then
     # --- zsh: native compsys completion (see sandbox.zsh) --------------------
