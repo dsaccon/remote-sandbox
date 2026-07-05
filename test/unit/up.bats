@@ -3,8 +3,9 @@
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     export SANDBOX_REPO_ROOT="$(mktemp -d)"
-    mkdir -p "$SANDBOX_REPO_ROOT/lib" "$SANDBOX_REPO_ROOT/ami" "$SANDBOX_REPO_ROOT/bin"
-    cp "$REPO_ROOT"/lib/{log,config,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    mkdir -p "$SANDBOX_REPO_ROOT/lib/providers" "$SANDBOX_REPO_ROOT/ami" "$SANDBOX_REPO_ROOT/bin"
+    cp "$REPO_ROOT"/lib/{log,config,common,provider,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    cp "$REPO_ROOT/lib/providers/aws.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
     cp "$REPO_ROOT/ami/cloud-init.yaml.tmpl" "$SANDBOX_REPO_ROOT/ami/"
     cp "$REPO_ROOT/bin/sandbox-up" "$SANDBOX_REPO_ROOT/bin/"
     cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
@@ -195,4 +196,28 @@ EOF
     run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --no-spot --spot
     [ "$status" -ne 0 ]
     [[ "$output" == *"conflicting --spot/--no-spot"* ]]
+}
+
+@test "up under CLOUD=gcp rejects a non-RFC1035 --name before any launch" {
+    cp "$REPO_ROOT/lib/providers/gcp.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+CLOUD="gcp"
+GCP_PROJECT="p"
+AWS_REGION="us-west-2"
+SSH_KEY_NAME="claude-sandbox"
+SSH_USER="ubuntu"
+INSTANCE_TYPE="m7i-flex.xlarge"
+USE_SPOT="true"
+SPOT_FALLBACK_ON_DEMAND="true"
+AMI_ID="ami-abc"
+AUTO_SHUTDOWN_HOURS="0"
+EOF
+    write_aws_fake
+
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --name Bad_Name
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"RFC1035"* ]]
+    # Rejected before any preflight/launch call — the aws stub's log (used as
+    # a stand-in for "any provider call happened") stays empty.
+    [ ! -s "$AWS_STUB_LOG" ]
 }

@@ -3,7 +3,7 @@
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     # shellcheck source=/dev/null
-    source "$REPO_ROOT/lib/provision.sh"
+    source "$REPO_ROOT/lib/common.sh"
 }
 
 @test "render_cloud_init substitutes hostname when no repo" {

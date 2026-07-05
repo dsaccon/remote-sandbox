@@ -15,8 +15,8 @@ REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$REPO_ROOT/lib/log.sh"
 # shellcheck source=../lib/config.sh
 source "$REPO_ROOT/lib/config.sh"
-# shellcheck source=../lib/aws.sh
-source "$REPO_ROOT/lib/aws.sh"
+# shellcheck source=../lib/provider.sh
+source "$REPO_ROOT/lib/provider.sh"
 
 : "${SSH_CMD:=ssh}"
 : "${SCP_CMD:=scp}"
@@ -251,10 +251,11 @@ browse_remote() {
 }
 
 config_load
-aws_caller_identity
+provider_load
+provider_check_creds
 
 # Resolve <name> to the running box's public IP (shared with `ssh`).
-ip="$(aws_resolve_running_sandbox_ip "$name")" || exit 1
+ip="$(provider_resolve_ip "$name")" || exit 1
 
 # Same key handling as sandbox-ssh.
 key_args=()

@@ -30,6 +30,9 @@ esac
 [[ $# -ge 1 ]] || { usage; exit 2; }
 
 config_load
+if [[ "${CLOUD:-aws}" != "aws" ]]; then
+    die "image management (list-amis/delete-ami) is only supported on aws (CLOUD=$CLOUD)"
+fi
 aws_caller_identity
 
 current="${AMI_ID:-}"

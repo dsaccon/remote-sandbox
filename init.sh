@@ -44,6 +44,14 @@ set -a
 source "$_env_file"
 set +a
 
+# GCP: gcloud reads Application Default Credentials from this path. Users put
+# GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json in .env, which the export
+# block above already exported — this just confirms/validates it.
+if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -f "${GOOGLE_APPLICATION_CREDENTIALS}" ]]; then
+    export GOOGLE_APPLICATION_CREDENTIALS
+    echo "init: GOOGLE_APPLICATION_CREDENTIALS set for gcloud"
+fi
+
 # Report what got loaded — names only, never values.
 _env_loaded="$(awk -F'=' '/^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*=/ {print $1}' "$_env_file" | tr '\n' ' ')"
 echo "init: exported [$_env_loaded] from $_env_file"

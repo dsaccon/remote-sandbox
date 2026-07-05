@@ -108,3 +108,26 @@ EOF
     grep -q '^USE_SPOT="false"' "$SANDBOX_REPO_ROOT/config"
     grep -q '^INSTANCE_TYPE="m7i-flex.xlarge"' "$SANDBOX_REPO_ROOT/config"
 }
+
+@test "config_load defaults the GCP keys" {
+    write_config <<'EOF'
+AWS_REGION="us-west-2"
+EOF
+    source "$SANDBOX_REPO_ROOT/lib/config.sh"
+    config_load
+    [ "$GCP_ZONE" = "us-west1-b" ]
+    [ "$GCP_MACHINE_TYPE" = "e2-standard-4" ]
+    [ "$GCP_PROJECT" = "" ]
+    [ "$GCP_IMAGE" = "" ]
+    [ "$GCP_SSH_PUBKEY" = "" ]
+}
+
+@test "config_load lets env override a GCP key" {
+    write_config <<'EOF'
+AWS_REGION="us-west-2"
+EOF
+    export SANDBOX_GCP_PROJECT="my-proj"
+    source "$SANDBOX_REPO_ROOT/lib/config.sh"
+    config_load
+    [ "$GCP_PROJECT" = "my-proj" ]
+}
