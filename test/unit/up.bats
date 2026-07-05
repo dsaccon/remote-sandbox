@@ -222,6 +222,36 @@ EOF
     [ ! -s "$AWS_STUB_LOG" ]
 }
 
+@test "up --cloud overrides the config CLOUD launch target" {
+    cp "$REPO_ROOT/lib/providers/gcp.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+CLOUD="gcp"
+GCP_PROJECT="p"
+AWS_REGION="us-west-2"
+SSH_KEY_NAME="claude-sandbox"
+SSH_USER="ubuntu"
+INSTANCE_TYPE="m7i-flex.xlarge"
+USE_SPOT="true"
+SPOT_FALLBACK_ON_DEMAND="true"
+AMI_ID="ami-abc"
+AUTO_SHUTDOWN_HOURS="0"
+EOF
+    write_aws_fake
+    set_fixture 1 0 '{"Arn":"x"}'
+    set_fixture 2 0 '{"Images":[{"ImageId":"ami-abc"}]}'
+    set_fixture 3 0 '{"KeyPairs":[{"KeyName":"claude-sandbox"}]}'
+    set_fixture 4 0 'sg-123'
+    set_fixture 5 0 '{"SecurityGroups":[{"IpPermissions":[]}]}'
+    set_fixture 6 0 ''
+    set_fixture 7 0 '{"Instances":[{"InstanceId":"i-xyz"}]}'
+
+    # config says gcp, but --cloud aws wins → the AWS launch path runs.
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --cloud aws
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"i-xyz"* ]]
+    grep -q -- 'run-instances' "$AWS_STUB_LOG"
+}
+
 # A launch that fails must surface an error and non-zero exit, not silently
 # die (the old `read -r id < <(provider_launch)` swallowed failures as EOF).
 @test "up surfaces a launch failure instead of exiting silently" {

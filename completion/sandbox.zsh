@@ -52,10 +52,18 @@ _sandbox() {
         return
     fi
 
+    # --cloud <TAB> → the cloud name, for any subcommand that accepts --cloud.
+    if [[ $words[CURRENT-1] == --cloud ]]; then
+        local -a clouds; clouds=(aws gcp)
+        _describe -t clouds 'cloud' clouds
+        return
+    fi
+
     case $cmd in
         up)
             local -a opts
             opts=(
+                '--cloud:launch into aws or gcp (overrides config CLOUD)'
                 '--repo:clone a git repo into the box'
                 '--name:sandbox name'
                 '--instance-type:EC2 instance type'
@@ -77,6 +85,8 @@ _sandbox() {
                 opts=(
                     '--all:terminate every sandbox'
                     '--stale:terminate boxes older than a duration'
+                    '--cloud:restrict to one cloud (aws|gcp)'
+                    '--yes:skip the confirmation prompt'
                     '--help:show help'
                 )
                 _describe -t options 'option' opts
@@ -84,12 +94,10 @@ _sandbox() {
             ;;
 
         ssh)
-            # ssh takes a single <name>.
-            if (( CURRENT == 3 )); then
-                _sandbox_names
-                local -a opts; opts=('--help:show help')
-                _describe -t options 'option' opts
-            fi
+            # ssh takes a single <name>, optionally with --cloud.
+            _sandbox_names
+            local -a opts; opts=('--cloud:restrict to one cloud (aws|gcp)' '--help:show help')
+            _describe -t options 'option' opts
             ;;
 
         scp)
@@ -124,6 +132,7 @@ _sandbox() {
                     opts=(
                         '-d:download mode (sandbox -> local)'
                         '--download:download mode (sandbox -> local)'
+                        '--cloud:restrict to one cloud (aws|gcp)'
                         '--help:show help'
                     )
                     (( dl )) && opts+=(
@@ -147,7 +156,12 @@ _sandbox() {
             fi
             ;;
 
-        list|list-amis)
+        list)
+            local -a opts; opts=('--active:only the ready ones' '--cloud:restrict to one cloud (aws|gcp)' '--help:show help')
+            _describe -t options 'option' opts
+            ;;
+
+        list-amis)
             local -a opts; opts=('--active:only the ready ones' '--help:show help')
             _describe -t options 'option' opts
             ;;

@@ -8,38 +8,45 @@ REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$REPO_ROOT/lib/log.sh"
 # shellcheck source=../lib/config.sh
 source "$REPO_ROOT/lib/config.sh"
-# shellcheck source=../lib/provider.sh
-source "$REPO_ROOT/lib/provider.sh"
+# shellcheck source=../lib/multicloud.sh
+source "$REPO_ROOT/lib/multicloud.sh"
 
 : "${CMUX_CMD:=cmux}"
 
-case "${1:-}" in
-    -h|--help)
-        cat <<'EOF'
-Usage: sandbox ssh <name>
+usage() {
+    cat <<'EOF'
+Usage: sandbox ssh <name> [--cloud aws|gcp]
 
-Resolve <name> to the running sandbox's public IP via EC2 tags and exec
-ssh into it as $SSH_USER. The SSH key file (-i $SSH_KEY_FILE) and
+Resolve <name> to its running sandbox's public IP — searching BOTH clouds
+(aws + gcp), so you don't need to set CLOUD — and exec ssh into it as
+$SSH_USER. --cloud narrows the search to one cloud (e.g. to disambiguate a
+name present in both). The SSH key file (-i $SSH_KEY_FILE) and
 IdentitiesOnly=yes are passed automatically when the file is readable.
 
-If cmux is installed and its app is running, the session opens as a cmux
-ssh workspace instead of a plain terminal ssh. Set SSH_USE_CMUX=false in
-./config (or SANDBOX_SSH_USE_CMUX=false) to always use plain ssh.
+If cmux is installed and its app is running, the session opens as a cmux ssh
+workspace. Set SSH_USE_CMUX=false in ./config to always use plain ssh.
 EOF
-        exit 0
-        ;;
-esac
+}
 
-[[ $# -eq 1 ]] || die "Usage: sandbox ssh <name>  (try 'sandbox ssh --help')"
-name="$1"
+name=""
+scope=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        --cloud)   [[ $# -ge 2 ]] || die "--cloud needs a value (aws|gcp)"
+                   scope="$2"; mc_valid_cloud "$scope"; shift 2 ;;
+        -*)        die "unknown flag: $1 (try 'sandbox ssh --help')" ;;
+        *)         [[ -n "$name" ]] && die "Usage: sandbox ssh <name> [--cloud aws|gcp]"
+                   name="$1"; shift ;;
+    esac
+done
+[[ -n "$name" ]] || die "Usage: sandbox ssh <name>  (try 'sandbox ssh --help')"
 
 config_load
-provider_load
-provider_check_creds
 
-# Resolve <name> to the running box's public IP (shared with `scp`). Dies with
-# a state-specific message if the box is missing/booting/stopped/gone.
-ip="$(provider_resolve_ip "$name")" || exit 1
+# Resolve <name> to the running box's public IP across clouds (shared with
+# `scp`). Dies with a state-specific message if missing/booting/stopped/gone.
+ip="$(mc_resolve_ip "$name" "$scope")" || exit 1
 
 # Prefer a cmux ssh workspace over a plain terminal ssh when cmux is
 # installed and its app is reachable. SSH_USE_CMUX=false (./config or

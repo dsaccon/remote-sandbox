@@ -4,8 +4,8 @@ setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     export SANDBOX_REPO_ROOT="$(mktemp -d)"
     mkdir -p "$SANDBOX_REPO_ROOT/lib/providers" "$SANDBOX_REPO_ROOT/bin"
-    cp "$REPO_ROOT"/lib/{log,config,common,provider,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
-    cp "$REPO_ROOT/lib/providers/aws.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
+    cp "$REPO_ROOT"/lib/{log,config,common,provider,multicloud,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    cp "$REPO_ROOT"/lib/providers/{aws,gcp}.sh "$SANDBOX_REPO_ROOT/lib/providers/"
     cp "$REPO_ROOT/bin/sandbox-ssh" "$SANDBOX_REPO_ROOT/bin/"
     cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
 AWS_REGION="us-west-2"
@@ -14,6 +14,9 @@ EOF
     export AWS_STUB_LOG="$BATS_TEST_TMPDIR/aws.log"; : > "$AWS_STUB_LOG"
     export AWS_STUB_RESPONSE="$BATS_TEST_TMPDIR/aws-resp"
     export AWS_CMD="$REPO_ROOT/test/unit/stubs/aws-empty"
+    export GCLOUD_STUB_LOG="$BATS_TEST_TMPDIR/gcloud.log"; : > "$GCLOUD_STUB_LOG"
+    export GCLOUD_STUB_RESPONSE="$BATS_TEST_TMPDIR/gcloud-resp"
+    export GCLOUD_CMD="$REPO_ROOT/test/unit/stubs/gcloud-empty"
     export SSH_CMD="$BATS_TEST_TMPDIR/ssh-stub"
     cat > "$SSH_CMD" <<'EOF'
 #!/usr/bin/env bash
@@ -35,6 +38,23 @@ EOF
     run "$SANDBOX_REPO_ROOT/bin/sandbox-ssh" sandbox-x
     [ "$status" -eq 0 ]
     [[ "$output" == *"SSH_CMD: ubuntu@5.6.7.8"* ]]
+}
+
+@test "ssh finds a box in gcp across clouds (no CLOUD needed)" {
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+AWS_REGION="us-west-2"
+GCP_PROJECT="proj"
+GCP_ZONE="us-west1-b"
+SSH_USER="ubuntu"
+EOF
+    printf '0\n{"Reservations":[]}\n' > "$AWS_STUB_RESPONSE"
+    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+0
+[{"name":"sandbox-gcp","status":"RUNNING","machineType":"z/e2","creationTimestamp":"2026-07-05T00:00:00.000-07:00","scheduling":{"provisioningModel":"STANDARD"},"networkInterfaces":[{"accessConfigs":[{"natIP":"9.9.9.9"}]}],"metadata":{"items":[]},"tags":{"items":["sandbox-gcp"]}}]
+EOF
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-ssh" sandbox-gcp
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SSH_CMD: ubuntu@9.9.9.9"* ]]
 }
 
 @test "ssh unknown name exits non-zero" {

@@ -4,8 +4,8 @@ setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     export SANDBOX_REPO_ROOT="$(mktemp -d)"
     mkdir -p "$SANDBOX_REPO_ROOT/lib/providers" "$SANDBOX_REPO_ROOT/bin"
-    cp "$REPO_ROOT"/lib/{log,config,common,provider,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
-    cp "$REPO_ROOT/lib/providers/aws.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
+    cp "$REPO_ROOT"/lib/{log,config,common,provider,multicloud,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    cp "$REPO_ROOT"/lib/providers/{aws,gcp}.sh "$SANDBOX_REPO_ROOT/lib/providers/"
     cp "$REPO_ROOT/bin/sandbox-scp" "$SANDBOX_REPO_ROOT/bin/"
     cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
 AWS_REGION="us-west-2"
@@ -14,6 +14,9 @@ EOF
     export AWS_STUB_LOG="$BATS_TEST_TMPDIR/aws.log"; : > "$AWS_STUB_LOG"
     export AWS_STUB_RESPONSE="$BATS_TEST_TMPDIR/aws-resp"
     export AWS_CMD="$REPO_ROOT/test/unit/stubs/aws-empty"
+    export GCLOUD_STUB_LOG="$BATS_TEST_TMPDIR/gcloud.log"; : > "$GCLOUD_STUB_LOG"
+    export GCLOUD_STUB_RESPONSE="$BATS_TEST_TMPDIR/gcloud-resp"
+    export GCLOUD_CMD="$REPO_ROOT/test/unit/stubs/gcloud-empty"
 
     # scp stub: record argv so tests can assert on the upload command.
     export SCP_CMD="$BATS_TEST_TMPDIR/scp-stub"

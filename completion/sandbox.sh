@@ -31,29 +31,30 @@ _sandbox_cfg() {
         "$_sandbox_config" 2>/dev/null | head -1
 }
 
-# _sandbox_list_names — live sandbox names for the ACTIVE cloud (ssh/scp/down
-# all operate on CLOUD, so completion matches what they can reach). Silent
-# failure → empty output, so completion just doesn't enumerate.
+# _sandbox_list_names — live sandbox names across BOTH clouds (ssh/scp/down are
+# cross-cloud, so completion offers everything reachable). A cloud whose
+# CLI/credentials aren't available contributes nothing. Silent failure → empty
+# output, so completion just doesn't enumerate.
 _sandbox_list_names() {
-    local cloud; cloud="$(_sandbox_cfg CLOUD)"; cloud="${cloud:-aws}"
-    if [[ "$cloud" == "gcp" ]]; then
-        local proj; proj="$(_sandbox_cfg GCP_PROJECT)"
-        [[ -z "$proj" ]] && return 0
-        gcloud compute instances list --project "$proj" \
-            --filter="labels.project=claude-sandbox" \
-            --format="value(name)" 2>/dev/null
-    else
-        # Emit (Name, BakeRole) and drop bake VMs in awk — JMESPath negation is
-        # unreliable.
-        local region="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
-        aws ec2 describe-instances --region "$region" \
-            --filters \
-                'Name=tag:Project,Values=claude-sandbox' \
-                'Name=instance-state-name,Values=pending,running,stopping,stopped' \
-            --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value | [0], Tags[?Key==`BakeRole`].Value | [0]]' \
-            --output text 2>/dev/null \
-            | awk '$2 == "None" { print $1 }'
-    fi
+    { _sandbox_names_aws; _sandbox_names_gcp; } 2>/dev/null | sort -u
+}
+_sandbox_names_aws() {
+    # Emit (Name, BakeRole) and drop bake VMs in awk — JMESPath negation is
+    # unreliable.
+    local region="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
+    aws ec2 describe-instances --region "$region" \
+        --filters \
+            'Name=tag:Project,Values=claude-sandbox' \
+            'Name=instance-state-name,Values=pending,running,stopping,stopped' \
+        --query 'Reservations[].Instances[].[Tags[?Key==`Name`].Value | [0], Tags[?Key==`BakeRole`].Value | [0]]' \
+        --output text 2>/dev/null \
+        | awk '$2 == "None" { print $1 }'
+}
+_sandbox_names_gcp() {
+    local proj; proj="$(_sandbox_cfg GCP_PROJECT)"
+    [[ -z "$proj" ]] && return 0
+    gcloud compute instances list --project "$proj" \
+        --filter="labels.project=claude-sandbox" --format="value(name)" 2>/dev/null
 }
 
 _sandbox_list_amis() {
@@ -124,7 +125,7 @@ else
         case "$subcmd" in
             up)
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "--repo --name --instance-type --spot --no-spot --ssh-cidr --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "--cloud --repo --name --instance-type --spot --no-spot --ssh-cidr --help" -- "$cur") )
                 ;;
 
             down)
@@ -133,27 +134,39 @@ else
                     COMPREPLY=( $(compgen -W "30m 1h 4h 12h 24h 48h 7d" -- "$cur") )
                     return
                 fi
+                if [[ "$prev" == "--cloud" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                    return
+                fi
                 local names
                 names="$(_sandbox_list_names)"
                 # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "$names --all --stale --help" -- "$cur") )
+                COMPREPLY=( $(compgen -W "$names --all --stale --cloud --yes --help" -- "$cur") )
                 ;;
 
             ssh)
-                if [[ $COMP_CWORD -eq 2 ]]; then
+                if [[ "$prev" == "--cloud" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                elif [[ "$cur" == -* ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "--cloud --help" -- "$cur") )
+                else
                     local names
                     names="$(_sandbox_list_names)"
                     # shellcheck disable=SC2207
-                    COMPREPLY=( $(compgen -W "$names --help" -- "$cur") )
-                else
-                    COMPREPLY=()   # ssh takes a single <name>
+                    COMPREPLY=( $(compgen -W "$names --cloud --help" -- "$cur") )
                 fi
                 ;;
 
             scp)
                 # upload:    scp <name> <src-path> [dest-path]
                 # download:  scp <name> -d [remote-src] [local-dest|-o local-dest]
-                if [[ "${COMP_WORDS[COMP_CWORD-1]}" == "-o" || "${COMP_WORDS[COMP_CWORD-1]}" == "--output" ]]; then
+                if [[ "${COMP_WORDS[COMP_CWORD-1]}" == "--cloud" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                elif [[ "${COMP_WORDS[COMP_CWORD-1]}" == "-o" || "${COMP_WORDS[COMP_CWORD-1]}" == "--output" ]]; then
                     # The value of `-o <path>` / `--output <path>` is a LOCAL path.
                     _sandbox_complete_path "$cur"
                 elif [[ "$cur" == --output=* ]]; then
@@ -179,7 +192,7 @@ else
                     done
 
                     if [[ "$cur" == -* ]]; then
-                        flags="-d --download --help"
+                        flags="-d --download --cloud --help"
                         (( dl )) && flags="$flags -o --output"
                         # shellcheck disable=SC2207
                         COMPREPLY=( $(compgen -W "$flags" -- "$cur") )
@@ -204,7 +217,17 @@ else
                 fi
                 ;;
 
-            list|list-amis)
+            list)
+                if [[ "$prev" == "--cloud" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                else
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "--active --cloud --help" -- "$cur") )
+                fi
+                ;;
+
+            list-amis)
                 # shellcheck disable=SC2207
                 COMPREPLY=( $(compgen -W "--active --help" -- "$cur") )
                 ;;

@@ -15,8 +15,8 @@ REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$REPO_ROOT/lib/log.sh"
 # shellcheck source=../lib/config.sh
 source "$REPO_ROOT/lib/config.sh"
-# shellcheck source=../lib/provider.sh
-source "$REPO_ROOT/lib/provider.sh"
+# shellcheck source=../lib/multicloud.sh
+source "$REPO_ROOT/lib/multicloud.sh"
 
 : "${SSH_CMD:=ssh}"
 : "${SCP_CMD:=scp}"
@@ -27,8 +27,9 @@ Usage:
   sandbox scp <name> <src-path> [dest-path]       upload   (local -> sandbox)
   sandbox scp <name> -d [remote-src] [local-dest]  download (sandbox -> local)
 
-<name> is resolved exactly as `sandbox ssh` does. The SSH key file
-(-i $SSH_KEY_FILE) and IdentitiesOnly=yes are passed automatically.
+<name> is resolved across BOTH clouds exactly as `sandbox ssh` does; add
+--cloud aws|gcp to narrow the search. The SSH key file (-i $SSH_KEY_FILE) and
+IdentitiesOnly=yes are passed automatically.
 
 Upload:
   <src-path>   a local file or directory (a directory is copied with scp -r).
@@ -52,27 +53,37 @@ Browser keys:
 EOF
 }
 
-# Parse argv: -h/--help, -d/--download and -o/--output may appear anywhere;
-# everything else is a positional (name, then the path(s)).
+# Parse argv: -h/--help, -d/--download, -o/--output, --cloud may appear
+# anywhere; everything else is a positional (name, then the path(s)).
 download=0
 have_out=0
 out_dest=""
+scope=""
 positionals=()
 expect_out=0
+expect_cloud=0
 for arg in "$@"; do
     if (( expect_out )); then
         out_dest="$arg"; have_out=1; expect_out=0; continue
+    fi
+    if (( expect_cloud )); then
+        scope="$arg"; mc_valid_cloud "$scope"; expect_cloud=0; continue
     fi
     case "$arg" in
         -h|--help)     usage; exit 0 ;;
         -d|--download) download=1 ;;
         -o|--output)   expect_out=1 ;;
         --output=*)    out_dest="${arg#*=}"; have_out=1 ;;
+        --cloud)       expect_cloud=1 ;;
+        --cloud=*)     scope="${arg#*=}"; mc_valid_cloud "$scope" ;;
         *)             positionals+=("$arg") ;;
     esac
 done
 if (( expect_out )); then
     die "-o/--output requires a directory or file argument"
+fi
+if (( expect_cloud )); then
+    die "--cloud requires a value (aws|gcp)"
 fi
 
 name="${positionals[0]:-}"
@@ -251,11 +262,9 @@ browse_remote() {
 }
 
 config_load
-provider_load
-provider_check_creds
 
-# Resolve <name> to the running box's public IP (shared with `ssh`).
-ip="$(provider_resolve_ip "$name")" || exit 1
+# Resolve <name> to the running box's public IP across clouds (shared with `ssh`).
+ip="$(mc_resolve_ip "$name" "$scope")" || exit 1
 
 # Same key handling as sandbox-ssh.
 key_args=()

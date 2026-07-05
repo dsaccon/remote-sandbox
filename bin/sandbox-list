@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# bin/sandbox-list — list all claude-sandbox instances across every configured
-# cloud (aws + gcp), with a PROVIDER column showing which one each lives in.
+# bin/sandbox-list — list claude-sandbox instances across every configured cloud
+# (aws + gcp), with a PROVIDER column. --cloud narrows to one.
 
 set -euo pipefail
 
@@ -9,76 +9,45 @@ REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$REPO_ROOT/lib/log.sh"
 # shellcheck source=../lib/config.sh
 source "$REPO_ROOT/lib/config.sh"
-# shellcheck source=../lib/provider.sh
-source "$REPO_ROOT/lib/provider.sh"
+# shellcheck source=../lib/multicloud.sh
+source "$REPO_ROOT/lib/multicloud.sh"
 
-only_active=0
-case "${1:-}" in
-    -h|--help)
-        cat <<'EOF'
-Usage: sandbox list [--active]
+usage() {
+    cat <<'EOF'
+Usage: sandbox list [--active] [--cloud aws|gcp]
 
-List every sandbox (Project=claude-sandbox) across ALL configured clouds —
-both AWS and GCP — regardless of the active CLOUD setting. Columns: PROVIDER,
-NAME, STATE, TYPE, MARKET, AGE, EXPIRES, IP, ALLOWED.
+List every sandbox (Project=claude-sandbox) across ALL configured clouds — both
+AWS and GCP — regardless of the config CLOUD. Columns: PROVIDER, NAME, STATE,
+TYPE, MARKET, AGE, EXPIRES, IP, ALLOWED.
 
   PROVIDER "aws" or "gcp" — which cloud the box lives in. A cloud whose
-           credentials aren't configured (no AWS keys / no GCP_PROJECT or
-           gcloud login) is skipped silently rather than erroring.
-  MARKET   "spot" for a spot/preemptible instance (the cloud can reclaim it
-           at any time), else "on-demand".
-  EXPIRES  Time until the box auto-terminates (AWS in-VM timer / GCP
-           max-run-duration). "off" if disabled at launch, "-" if unknown.
+           credentials aren't configured is skipped silently.
+  MARKET   "spot" for a spot/preemptible instance, else "on-demand".
+  EXPIRES  Time until the box auto-terminates. "off" if disabled, "-" if unknown.
   ALLOWED  CIDR the sandbox's firewall/SG lets in on :22; "-" if none found.
 
-  --active   Only show ready sandboxes. Hides
-             pending/initializing/stopped/terminated.
-
-Note: up / ssh / scp / down still operate on the active CLOUD only — this
-cross-cloud view applies to `list`.
+  --active         Only show ready sandboxes.
+  --cloud aws|gcp  Only show boxes in this cloud (default: both).
 EOF
-        exit 0
-        ;;
-    --active)
-        only_active=1
-        ;;
-    "")
-        ;;
-    *)
-        die "unknown arg: $1 (try 'sandbox list --help')"
-        ;;
-esac
+}
+
+only_active=0
+scope=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        --active)  only_active=1; shift ;;
+        --cloud)   [[ $# -ge 2 ]] || die "--cloud needs a value (aws|gcp)"
+                   scope="$2"; mc_valid_cloud "$scope"; shift 2 ;;
+        *)         die "unknown arg: $1 (try 'sandbox list --help')" ;;
+    esac
+done
 
 config_load
 
-# emit_rows — query each cloud independently and print its normalized records,
-# each prefixed with the provider name (→ 10 tab-separated fields).
-#
-# Each driver defines the same provider_* function names, so the two can't be
-# sourced side-by-side; we load each in its own subshell. A cloud whose CLI or
-# credentials aren't usable produces no rows and is skipped silently (the
-# subshell always exits 0, so a creds failure never aborts the listing or trips
-# the caller's `set -e`).
-emit_rows() {
-    local prov
-    for prov in aws gcp; do
-        (
-            set +e
-            CLOUD="$prov"
-            provider_load 2>/dev/null || exit 0
-            ( provider_check_creds ) >/dev/null 2>&1 || exit 0
-            provider_list 2>/dev/null | while IFS= read -r row; do
-                [ -n "$row" ] && printf '%s\t%s\n' "$prov" "$row"
-            done
-            exit 0
-        )
-    done
-    return 0
-}
-
-rows="$(emit_rows)"
+rows="$(provider_list_all "$scope")"
 if [[ -z "$rows" ]]; then
-    echo "no sandboxes (aws or gcp)"
+    if [[ -n "$scope" ]]; then echo "no sandboxes in $scope"; else echo "no sandboxes (aws or gcp)"; fi
     exit 0
 fi
 

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# bin/sandbox-down — terminate one sandbox, all of them, or stale ones.
+# bin/sandbox-down — terminate one sandbox, all of them, or stale ones, across
+# BOTH clouds (aws + gcp). --cloud narrows to one; --all/--stale prompt for
+# confirmation (--yes skips).
 
 set -euo pipefail
 
@@ -8,26 +10,21 @@ REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source "$REPO_ROOT/lib/log.sh"
 # shellcheck source=../lib/config.sh
 source "$REPO_ROOT/lib/config.sh"
-# shellcheck source=../lib/provider.sh
-source "$REPO_ROOT/lib/provider.sh"
+# shellcheck source=../lib/multicloud.sh
+source "$REPO_ROOT/lib/multicloud.sh"
 
 usage() {
     cat <<'EOF'
-Usage: sandbox down <name|id>
-       sandbox down --all
-       sandbox down --stale <duration>   # e.g. 30m, 24h, 2d
+Usage: sandbox down <name> [--cloud aws|gcp]
+       sandbox down --all [--cloud aws|gcp] [--yes]
+       sandbox down --stale <duration> [--cloud aws|gcp] [--yes]   # e.g. 30m, 24h, 2d
+
+Finds and terminates sandboxes across BOTH clouds. `down <name>` terminates that
+one box wherever it lives. `--all` / `--stale` first list what they'd terminate
+and ask for confirmation; `--yes` skips the prompt. `--cloud aws|gcp` restricts
+any of these to a single cloud.
 EOF
 }
-
-# Early --help check (before config / provider calls), so help works even
-# when credentials aren't loaded.
-case "${1:-}" in
-    -h|--help) usage; exit 0 ;;
-esac
-
-config_load
-provider_load
-provider_check_creds
 
 # parse_duration_to_seconds 24h | 30m | 2d
 parse_duration_to_seconds() {
@@ -42,89 +39,81 @@ parse_duration_to_seconds() {
     esac
 }
 
-if [[ $# -eq 0 ]]; then usage; exit 2; fi
+scope=""
+assume_yes=0
+mode=""
+dur=""
+target=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        --cloud)   [[ $# -ge 2 ]] || die "--cloud needs a value (aws|gcp)"
+                   scope="$2"; mc_valid_cloud "$scope"; shift 2 ;;
+        --cloud=*) scope="${1#*=}"; mc_valid_cloud "$scope"; shift ;;
+        -y|--yes)  assume_yes=1; shift ;;
+        --all)     [[ -n "$mode" ]] && die "pick one of <name> / --all / --stale"
+                   mode="all"; shift ;;
+        --stale)   [[ -n "$mode" ]] && die "pick one of <name> / --all / --stale"
+                   [[ $# -ge 2 ]] || die "--stale needs a duration (e.g. 24h)"
+                   mode="stale"; dur="$2"; shift 2 ;;
+        -*)        die "unknown flag: $1 (try 'sandbox down --help')" ;;
+        *)         [[ -n "$mode" ]] && die "pick one of <name> / --all / --stale"
+                   mode="one"; target="$1"; shift ;;
+    esac
+done
+[[ -z "$mode" ]] && { usage >&2; exit 2; }
 
-mode="$1"
+config_load
 
-# rows: handle name state type market launch_epoch ip allowed_cidr ash_hours
-rows="$(provider_list)"
+# confirm_bulk SEL — print the boxes in SEL (10-field rows) and require y/yes
+# unless --yes. Aborts the whole command (exit 0) if not confirmed.
+confirm_bulk() {
+    local sel="$1" count reply=""
+    count="$(printf '%s\n' "$sel" | grep -c .)"
+    {
+        printf '\nThese %s sandbox(es) will be TERMINATED:\n\n' "$count"
+        printf '%s\n' "$sel" | awk -F'\t' '{printf "  %-4s %-24s %s\n", $1, $3, $4}'
+        printf '\n'
+    } >&2
+    [[ "$assume_yes" -eq 1 ]] && return 0
+    printf 'Proceed? [y/N] ' >&2
+    read -r reply || true
+    case "$reply" in
+        y|Y|yes|YES) return 0 ;;
+        *) log_info "aborted — nothing terminated"; exit 0 ;;
+    esac
+}
 
-select_ids=()
-select_names=()
-
+sel=""
 case "$mode" in
-    --all)
-        # Every row that isn't already shutting-down/terminated.
-        while IFS=$'\t' read -r h n s _type _mkt _launch _ip _cidr _ash; do
-            [[ -z "$h" ]] && continue
-            case "$s" in
-                shutting-down|terminated) continue ;;
-            esac
-            select_ids+=("$h")
-            select_names+=("$n")
-        done <<< "$rows"
-        if [[ ${#select_ids[@]} -eq 0 ]]; then
-            log_info "no sandboxes to terminate"
-            exit 0
-        fi
-        log_info "shutting down: ${select_ids[*]} — track via './bin/sandbox list'"
+    all)
+        rows="$(provider_list_all "$scope")"
+        sel="$(printf '%s\n' "$rows" | awk -F'\t' '$1!="" && $4!="shutting-down" && $4!="terminated"')"
+        [[ -z "$sel" ]] && { log_info "no sandboxes to terminate"; exit 0; }
+        confirm_bulk "$sel"
         ;;
-    --stale)
-        [[ $# -lt 2 ]] && { usage; exit 2; }
-        threshold_sec="$(parse_duration_to_seconds "$2")"
+    stale)
+        threshold_sec="$(parse_duration_to_seconds "$dur")"
         now="$(date -u +%s)"
-        # Rows older than the threshold, excluding ones already shutting
-        # down/terminated. Staleness keys off launch_epoch (LaunchTime-
-        # derived) rather than a CreatedAt tag — in practice CreatedAt ==
-        # launch time, so this is behavior-preserving in the field.
-        while IFS=$'\t' read -r h n s _type _mkt launch _ip _cidr _ash; do
-            [[ -z "$h" ]] && continue
-            case "$s" in
-                shutting-down|terminated) continue ;;
-            esac
-            age=$(( now - launch ))
-            if (( age >= threshold_sec )); then
-                select_ids+=("$h")
-                select_names+=("$n")
-            fi
-        done <<< "$rows"
-        if [[ ${#select_ids[@]} -eq 0 ]]; then
-            log_info "no stale sandboxes"
-            exit 0
-        fi
-        log_info "shutting down stale: ${select_ids[*]} — track via './bin/sandbox list'"
+        rows="$(provider_list_all "$scope")"
+        # Older than the threshold (by launch_epoch, field 7), excluding rows
+        # already shutting down/terminated.
+        sel="$(printf '%s\n' "$rows" | awk -F'\t' -v now="$now" -v thr="$threshold_sec" \
+            '$1!="" && $4!="shutting-down" && $4!="terminated" && (now-$7)>=thr')"
+        [[ -z "$sel" ]] && { log_info "no stale sandboxes"; exit 0; }
+        confirm_bulk "$sel"
         ;;
-    -*)
-        usage; exit 2 ;;
-    *)
-        # Single name or handle.
-        target="$mode"
-        match_id=""
-        match_name=""
-        match_state=""
-        while IFS=$'\t' read -r h n s _type _mkt _launch _ip _cidr _ash; do
-            [[ -z "$h" ]] && continue
-            if [[ "$n" == "$target" || "$h" == "$target" ]]; then
-                match_id="$h"
-                match_name="$n"
-                match_state="$s"
-                break
-            fi
-        done <<< "$rows"
-        if [[ -z "$match_id" ]]; then
-            die "no sandbox named $target"
-        fi
-        case "$match_state" in
+    one)
+        # Find the box by name or handle across clouds (dies on none/ambiguous).
+        sel="$(mc_find "$target" "$scope")"
+        state="$(printf '%s' "$sel" | awk -F'\t' '{print $4}')"
+        case "$state" in
             shutting-down|terminated)
-                log_info "$target ($match_id) is already $match_state — nothing to do"
-                exit 0
-                ;;
+                log_info "$target is already $state — nothing to do"; exit 0 ;;
         esac
-        log_info "shutting down $target ($match_id) — track via './bin/sandbox list'"
-        select_ids=("$match_id")
-        select_names=("$match_name")
+        log_info "terminating $target — track via './bin/sandbox list'"
         ;;
 esac
 
-provider_terminate_ids "${select_ids[@]}"
-provider_cleanup_net "${select_names[@]}"
+# Feed "provider<TAB>handle<TAB>name" to the grouped terminator.
+printf '%s\n' "$sel" | awk -F'\t' '{print $1"\t"$2"\t"$3}' | mc_terminate

@@ -161,7 +161,8 @@ Run `./bin/sandbox --help` for the full list, or `./bin/sandbox <cmd> --help`
 for details on any subcommand.
 
 ```bash
-./bin/sandbox up                       # spin up a fresh box (spot) — non-blocking
+./bin/sandbox up                       # spin up a fresh box (into CLOUD) — non-blocking
+./bin/sandbox up --cloud gcp           #   ...into gcp this launch (overrides config CLOUD)
 ./bin/sandbox up --repo URL            #   ...and clone a repo into it
 ./bin/sandbox up --no-spot             # avoid spot for this launch (overrides USE_SPOT)
 ./bin/sandbox up --spot                # force spot for this launch (overrides USE_SPOT)
@@ -170,8 +171,9 @@ for details on any subcommand.
 ./bin/sandbox up --ssh-cidr 1.2.3.4/32 # override the SSH ingress CIDR for this sandbox
 ./bin/sandbox up --ssh-cidr 0.0.0.0/0  # ...or leave SSH open to the world
 
-./bin/sandbox list                     # what's running? (see STATE values below)
+./bin/sandbox list                     # what's running across BOTH clouds (PROVIDER column)
 ./bin/sandbox list --active            #   ...just the ready ones (terse output)
+./bin/sandbox list --cloud gcp         #   ...only one cloud
 ./bin/sandbox ssh <name>               # SSH into a box
 #   ...opens as a cmux ssh workspace instead if cmux is installed and running
 #   (set SSH_USE_CMUX=false in ./config to always use plain ssh)
@@ -187,15 +189,33 @@ for details on any subcommand.
 ./bin/sandbox spot off                 # make on-demand the standing default
 ./bin/sandbox spot on                  # make spot the standing default
 
-./bin/sandbox down <name>              # terminate one
-./bin/sandbox down --all               # terminate all
-./bin/sandbox down --stale 24h         # terminate boxes older than 24h
+./bin/sandbox down <name>              # terminate one (found in whichever cloud)
+./bin/sandbox down --all               # terminate all — lists them, asks to confirm
+./bin/sandbox down --all --yes         #   ...skip the confirmation prompt
+./bin/sandbox down --stale 24h         # terminate boxes older than 24h (asks to confirm)
+./bin/sandbox down --all --cloud aws   #   ...restrict a bulk terminate to one cloud
 
 ./bin/sandbox build-ami                # bake a fresh AMI
 ./bin/sandbox list-amis                # list AMIs you own (CURRENT=yes for the in-use one)
 ./bin/sandbox list-amis --active       #   ...only AMIs in use (current + any in-use)
 ./bin/sandbox delete-ami <ami-id> [...] # delete old AMIs (+ their snapshots)
 ```
+
+### Working across both clouds
+
+`CLOUD` in `./config` is just the **default launch target** for `up`. Everything
+that acts on an *existing* box works across **both** clouds regardless of
+`CLOUD`:
+
+- `list` shows aws + gcp together, with a `PROVIDER` column.
+- `ssh <name>` / `scp <name>` / `down <name>` find the box in whichever cloud it
+  lives in — you don't switch `CLOUD` to reach an AWS box from a gcp default.
+- `down --all` / `down --stale` span both clouds, print what they'll terminate,
+  and ask for confirmation (`--yes` skips it).
+
+Add `--cloud aws|gcp` to any of these (including `up`) to scope that one command
+to a single cloud. If a name somehow exists in both clouds, the command asks you
+to disambiguate with `--cloud`.
 
 `build-ami` never deletes the previous AMI — each bake adds an AMI + a
 ~30 GB EBS snapshot (~$1.50/month each). Use `list-amis` to see them and

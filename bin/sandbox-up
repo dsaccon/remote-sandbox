@@ -13,12 +13,14 @@ source "$REPO_ROOT/lib/provider.sh"
 
 usage() {
     cat <<'EOF'
-Usage: sandbox up [--repo URL] [--name N] [--instance-type T] [--spot|--no-spot]
-                  [--ssh-cidr CIDR]
+Usage: sandbox up [--cloud aws|gcp] [--repo URL] [--name N] [--instance-type T]
+                  [--spot|--no-spot] [--ssh-cidr CIDR]
 
 Provision one ephemeral sandbox VM and print the SSH command to reach it.
 
 Flags:
+  --cloud aws|gcp     Launch into this cloud, overriding the config CLOUD for
+                      this run. (CLOUD in ./config is the default launch target.)
   --repo URL          Clone this git URL onto the box during cloud-init.
   --name N            Use N as the sandbox name (default: random hex).
   --instance-type T   Override INSTANCE_TYPE from config (e.g. t3.large).
@@ -41,10 +43,14 @@ REPO_URL=""
 NAME=""
 SPOT_OVERRIDE=""   # "" = use config; "true" = --spot; "false" = --no-spot
 SSH_CIDR_FLAG=""
+CLOUD_FLAG=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --repo)           REPO_URL="$2"; shift 2 ;;
         --name)           NAME="$2"; shift 2 ;;
+        --cloud)
+            case "${2:-}" in aws|gcp) ;; *) die "unknown --cloud '${2:-}' (supported: aws, gcp)" ;; esac
+            CLOUD_FLAG="$2"; shift 2 ;;
         --instance-type)  config_set_from_flag INSTANCE_TYPE "$2"; shift 2 ;;
         --spot)
             [[ "$SPOT_OVERRIDE" == "false" ]] && die "conflicting --spot/--no-spot"
@@ -59,6 +65,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 config_load
+# --cloud overrides the config/env CLOUD launch target for this run.
+[[ -n "$CLOUD_FLAG" ]] && config_set_from_flag CLOUD "$CLOUD_FLAG"
 provider_load
 
 # Default name = sandbox-<8 hex chars>. Use openssl rather than
