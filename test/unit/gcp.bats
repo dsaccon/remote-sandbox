@@ -7,7 +7,7 @@ setup() {
     export GCLOUD_STUB_RESPONSE="$BATS_TEST_TMPDIR/gcloud-resp"
     export GCLOUD_CMD="$REPO_ROOT/test/unit/stubs/gcloud-empty"
     source "$REPO_ROOT/lib/providers/gcp.sh"
-    GCP_PROJECT="proj"; GCP_ZONE="us-west1-b"; SSH_USER="ubuntu"
+    GCP_PROJECT="proj"; GCP_ZONE="us-west1-b"; GCP_MACHINE_TYPE="e2-standard-4"; SSH_USER="ubuntu"
 }
 set_response() { local rc="$1"; shift; { echo "$rc"; printf '%s' "$*"; } > "$GCLOUD_STUB_RESPONSE"; }
 
@@ -30,6 +30,35 @@ set_response() { local rc="$1"; shift; { echo "$rc"; printf '%s' "$*"; } > "$GCL
     run provider_build_image
     [ "$status" -ne 0 ]
     [[ "$output" == *"not yet supported"* ]]
+}
+
+# Regression: gcp_render_startup must return 0 even with an empty repo. A
+# trailing `[[ -n "$repo" ]] && printf` made it return 1, which under the
+# caller's `set -e` aborted provider_launch right after the firewall create.
+@test "gcp_render_startup returns 0 with an empty repo" {
+    run gcp_render_startup sandbox-abc ""
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"hostnamectl set-hostname sandbox-abc"* ]]
+}
+
+# Regression (end-to-end): under `set -e` (as bin/sandbox-up runs), a repo-less
+# launch must still reach the instance-create, not die after the firewall.
+@test "provider_launch under set -e reaches instance-create with an empty repo" {
+    set_response 0 ''
+    echo "ssh-ed25519 AAAA test" > "$BATS_TEST_TMPDIR/id.pub"
+    run env REPO_ROOT="$REPO_ROOT" \
+            GCLOUD_CMD="$GCLOUD_CMD" GCLOUD_STUB_LOG="$GCLOUD_STUB_LOG" \
+            GCLOUD_STUB_RESPONSE="$GCLOUD_STUB_RESPONSE" \
+            GCP_PROJECT=proj GCP_ZONE=us-west1-b GCP_MACHINE_TYPE=e2-standard-4 \
+            SSH_USER=ubuntu \
+            GCP_SSH_PUBKEY="$BATS_TEST_TMPDIR/id.pub" AUTO_SHUTDOWN_HOURS=0 \
+        bash -c '
+            set -euo pipefail
+            source "$REPO_ROOT/lib/providers/gcp.sh"
+            provider_launch sandbox-abc "" false "1.2.3.4/32"
+        '
+    [ "$status" -eq 0 ]
+    grep -q -- "compute instances create sandbox-abc" "$GCLOUD_STUB_LOG"
 }
 
 @test "provider_launch creates a per-sandbox firewall rule and an instance" {

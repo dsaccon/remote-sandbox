@@ -56,7 +56,14 @@ gcp_render_startup() {
             "${DOTFILES_REPO:-}" "${CLAUDE_HARDENING_REPO:-}"
         cat "$_gcp_repo_bootstrap"     # ami/bootstrap.sh body, inlined
     fi
-    [[ -n "$repo" ]] && printf 'sudo -u %s -i bash -c %q\n' "${SSH_USER:-ubuntu}" "git clone $repo"
+    # NB: an `[[ -n "$repo" ]] && printf ...` one-liner here would make this
+    # function return the test's exit status (1) when $repo is empty — under the
+    # caller's `set -e` that aborts provider_launch AFTER the firewall is created
+    # but before the instance is launched. Use an explicit if so we always
+    # return 0.
+    if [[ -n "$repo" ]]; then
+        printf 'sudo -u %s -i bash -c %q\n' "${SSH_USER:-ubuntu}" "git clone $repo"
+    fi
 }
 
 provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
