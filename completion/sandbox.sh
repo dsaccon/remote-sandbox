@@ -31,12 +31,39 @@ _sandbox_cfg() {
         "$_sandbox_config" 2>/dev/null | head -1
 }
 
-# _sandbox_list_names — live sandbox names across BOTH clouds (ssh/scp/down are
-# cross-cloud, so completion offers everything reachable). A cloud whose
-# CLI/credentials aren't available contributes nothing. Silent failure → empty
-# output, so completion just doesn't enumerate.
+# Seconds to reuse the completion name cache. The first Tab queries the clouds;
+# repeat Tabs within this window return instantly. Short so a box you just
+# up'd/down'd shows up again quickly.
+_SANDBOX_NAMES_TTL=5
+
+# _sandbox_mtime FILE — file mtime as a unix epoch (macOS then GNU stat).
+_sandbox_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
+
+# _sandbox_list_names — sandbox names across BOTH clouds (ssh/scp/down are
+# cross-cloud, so completion offers everything reachable), cached for a few
+# seconds so repeated Tab presses don't re-hit the cloud APIs each time.
 _sandbox_list_names() {
-    { _sandbox_names_aws; _sandbox_names_gcp; } 2>/dev/null | sort -u
+    local key cache now m
+    key="$(printf '%s' "${_sandbox_config:-}" | cksum | cut -d' ' -f1)"
+    cache="${TMPDIR:-/tmp}/sandbox-names-$(id -u)-${key}"
+    now="$(date +%s)"; m="$(_sandbox_mtime "$cache")"
+    if [[ -z "$m" ]] || (( now - m >= _SANDBOX_NAMES_TTL )); then
+        # Refresh via a temp file + atomic rename so a concurrent Tab never
+        # reads a half-written cache.
+        if _sandbox_list_names_fresh > "$cache.$$" 2>/dev/null; then
+            mv -f "$cache.$$" "$cache" 2>/dev/null || rm -f "$cache.$$" 2>/dev/null
+        else
+            rm -f "$cache.$$" 2>/dev/null
+        fi
+    fi
+    cat "$cache" 2>/dev/null
+}
+
+# _sandbox_list_names_fresh — query both clouds CONCURRENTLY. Process
+# substitution starts both at once and merges them (parallel in bash AND zsh,
+# with no background-job notices), so latency is the slower query, not the sum.
+_sandbox_list_names_fresh() {
+    sort -u <(_sandbox_names_aws 2>/dev/null) <(_sandbox_names_gcp 2>/dev/null)
 }
 _sandbox_names_aws() {
     # Emit (Name, BakeRole) and drop bake VMs in awk — JMESPath negation is
