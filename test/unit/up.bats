@@ -221,3 +221,22 @@ EOF
     # a stand-in for "any provider call happened") stays empty.
     [ ! -s "$AWS_STUB_LOG" ]
 }
+
+# A launch that fails must surface an error and non-zero exit, not silently
+# die (the old `read -r id < <(provider_launch)` swallowed failures as EOF).
+@test "up surfaces a launch failure instead of exiting silently" {
+    write_aws_fake
+    set_fixture 1 0 '{"Arn":"x"}'
+    set_fixture 2 0 '{"Images":[{"ImageId":"ami-abc"}]}'
+    set_fixture 3 0 '{"KeyPairs":[{"KeyName":"claude-sandbox"}]}'
+    set_fixture 4 0 'sg-123'
+    set_fixture 5 0 '{"SecurityGroups":[{"IpPermissions":[]}]}'
+    set_fixture 6 0 ''
+    # 7: on-demand run-instances fails with a non-capacity error (no fallback).
+    set_fixture 7 255 'An error occurred (UnauthorizedOperation) when calling RunInstances'
+
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --no-spot
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"failed"* ]]
+    [[ "$output" != *"launching"* ]]
+}

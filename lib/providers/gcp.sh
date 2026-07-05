@@ -78,11 +78,14 @@ provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
         --rules=tcp:22 --source-ranges="$cidr" --target-tags="$name" >/dev/null
     log_info "firewall: ${name}-fw  SSH ingress = $cidr"
 
-    # metadata files: ssh-keys + startup-script (+ user-data if baked image uses cloud-init)
-    local kf sf; kf="$(mktemp)"; sf="$(mktemp)"
+    # metadata files: ssh-keys + startup-script. Capture prep/launch failures
+    # (rc) instead of letting `set -e` abort mid-way, so a failed launch can roll
+    # the firewall back rather than orphaning the <name>-fw rule.
+    local kf sf rc=0
+    kf="$(mktemp)"; sf="$(mktemp)"
     trap 'rm -f "$kf" "$sf"' RETURN
-    printf '%s:%s\n' "${SSH_USER:-ubuntu}" "$(cat "$pub")" > "$kf"
-    gcp_render_startup "$name" "$repo" > "$sf"
+    { printf '%s:%s\n' "${SSH_USER:-ubuntu}" "$(cat "$pub")" > "$kf" \
+        && gcp_render_startup "$name" "$repo" > "$sf"; } || rc=$?
 
     local args=(compute instances create "$name" --zone="$zone"
         --machine-type="${GCP_MACHINE_TYPE}"
@@ -103,8 +106,16 @@ provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
         args+=(--instance-termination-action=DELETE)   # clean up on preemption
     fi
 
-    log_info "requesting gcp instance ($GCP_MACHINE_TYPE, spot=$use_spot)..."
-    _gcloud "${args[@]}"
+    if [[ "$rc" -eq 0 ]]; then
+        log_info "requesting gcp instance ($GCP_MACHINE_TYPE, spot=$use_spot)..."
+        _gcloud "${args[@]}" || rc=$?
+    fi
+
+    if [[ "$rc" -ne 0 ]]; then
+        log_warn "launch failed — rolling back firewall ${name}-fw"
+        _gcloud compute firewall-rules delete "${name}-fw" --quiet >/dev/null 2>&1 || true
+        return "$rc"
+    fi
 }
 
 # gcp_ts_to_epoch RFC3339 -> unix epoch (best-effort; falls back to now).

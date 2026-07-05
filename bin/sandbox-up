@@ -79,7 +79,12 @@ provider_preflight
 
 ssh_cidr="$(resolve_ssh_cidr "$SSH_CIDR_FLAG")"
 
-read -r id < <(provider_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL" "$ssh_cidr")
+# Capture the launch's stdout (the instance id) and its exit status. A bare
+# `read -r id < <(provider_launch ...)` would swallow a launch failure as EOF
+# under `set -e` and exit with no message; this surfaces the error instead.
+if ! id="$(provider_launch "$NAME" "$REPO_URL" "$USE_SPOT_FINAL" "$ssh_cidr")"; then
+    die "launch of $NAME failed — see the error above"
+fi
 
 if [[ "${AUTO_SHUTDOWN_HOURS:-0}" -gt 0 ]]; then
     shutdown_note="Auto-shutdown in ${AUTO_SHUTDOWN_HOURS}h."

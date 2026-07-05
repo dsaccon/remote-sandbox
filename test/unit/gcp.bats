@@ -61,6 +61,29 @@ set_response() { local rc="$1"; shift; { echo "$rc"; printf '%s' "$*"; } > "$GCL
     grep -q -- "compute instances create sandbox-abc" "$GCLOUD_STUB_LOG"
 }
 
+# Regression: a failed instance-create must roll back the firewall it created,
+# not leave an orphaned <name>-fw rule.
+@test "provider_launch rolls back the firewall when the instance create fails" {
+    local stub="$BATS_TEST_TMPDIR/gcloud-failcreate"
+    cat > "$stub" <<'STUB'
+#!/usr/bin/env bash
+: "${GCLOUD_STUB_LOG:?}"
+printf '%s\n' "$*" >> "$GCLOUD_STUB_LOG"
+case "$*" in
+    *"instances create"*) exit 1 ;;   # simulate a failed create
+    *)                    exit 0 ;;
+esac
+STUB
+    chmod +x "$stub"
+    GCLOUD_CMD="$stub"
+    GCP_SSH_PUBKEY="$BATS_TEST_TMPDIR/id.pub"; echo "ssh-ed25519 AAAA test" > "$GCP_SSH_PUBKEY"
+    AUTO_SHUTDOWN_HOURS=0
+    run provider_launch sb-rb "" false "1.2.3.4/32"
+    [ "$status" -ne 0 ]
+    grep -q -- "firewall-rules create sb-rb-fw" "$GCLOUD_STUB_LOG"
+    grep -q -- "firewall-rules delete sb-rb-fw" "$GCLOUD_STUB_LOG"
+}
+
 @test "provider_launch creates a per-sandbox firewall rule and an instance" {
     set_response 0 ''    # gcloud calls succeed, empty output
     GCP_SSH_PUBKEY="$BATS_TEST_TMPDIR/id.pub"; echo "ssh-ed25519 AAAA test" > "$GCP_SSH_PUBKEY"
