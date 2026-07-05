@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# bin/sandbox-list — list all Project=claude-sandbox instances.
+# bin/sandbox-list — list all claude-sandbox instances across every configured
+# cloud (aws + gcp), with a PROVIDER column showing which one each lives in.
 
 set -euo pipefail
 
@@ -17,19 +18,24 @@ case "${1:-}" in
         cat <<'EOF'
 Usage: sandbox list [--active]
 
-List every sandbox (instances tagged Project=claude-sandbox) in the
-configured region, with columns: NAME, STATE, TYPE, MARKET, AGE, EXPIRES,
-IP, ALLOWED.
+List every sandbox (Project=claude-sandbox) across ALL configured clouds —
+both AWS and GCP — regardless of the active CLOUD setting. Columns: PROVIDER,
+NAME, STATE, TYPE, MARKET, AGE, EXPIRES, IP, ALLOWED.
 
-  MARKET   "spot" if the instance is a spot instance (AWS can reclaim it at
-           any time), else "on-demand".
-  EXPIRES  Time until the in-VM auto-shutdown timer terminates the box.
-           "off" if AUTO_SHUTDOWN_HOURS=0 at launch, "-" if launched
-           before this tag existed.
-  ALLOWED  CIDR the sandbox's SG lets in on :22; "-" if no rule found.
+  PROVIDER "aws" or "gcp" — which cloud the box lives in. A cloud whose
+           credentials aren't configured (no AWS keys / no GCP_PROJECT or
+           gcloud login) is skipped silently rather than erroring.
+  MARKET   "spot" for a spot/preemptible instance (the cloud can reclaim it
+           at any time), else "on-demand".
+  EXPIRES  Time until the box auto-terminates (AWS in-VM timer / GCP
+           max-run-duration). "off" if disabled at launch, "-" if unknown.
+  ALLOWED  CIDR the sandbox's firewall/SG lets in on :22; "-" if none found.
 
-  --active   Only show ready sandboxes (running + status checks passed).
-             Hides pending/initializing/stopped/terminated.
+  --active   Only show ready sandboxes. Hides
+             pending/initializing/stopped/terminated.
+
+Note: up / ssh / scp / down still operate on the active CLOUD only — this
+cross-cloud view applies to `list`.
 EOF
         exit 0
         ;;
@@ -44,20 +50,45 @@ EOF
 esac
 
 config_load
-provider_load
-provider_check_creds
 
-rows="$(provider_list)"
+# emit_rows — query each cloud independently and print its normalized records,
+# each prefixed with the provider name (→ 10 tab-separated fields).
+#
+# Each driver defines the same provider_* function names, so the two can't be
+# sourced side-by-side; we load each in its own subshell. A cloud whose CLI or
+# credentials aren't usable produces no rows and is skipped silently (the
+# subshell always exits 0, so a creds failure never aborts the listing or trips
+# the caller's `set -e`).
+emit_rows() {
+    local prov
+    for prov in aws gcp; do
+        (
+            set +e
+            CLOUD="$prov"
+            provider_load 2>/dev/null || exit 0
+            ( provider_check_creds ) >/dev/null 2>&1 || exit 0
+            provider_list 2>/dev/null | while IFS= read -r row; do
+                [ -n "$row" ] && printf '%s\t%s\n' "$prov" "$row"
+            done
+            exit 0
+        )
+    done
+    return 0
+}
+
+rows="$(emit_rows)"
 if [[ -z "$rows" ]]; then
-    echo "no sandboxes in $AWS_REGION"
+    echo "no sandboxes (aws or gcp)"
     exit 0
 fi
 
-# Header — STATE column widened to 14 to fit "initializing" / "shutting-down".
-printf '%-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' NAME STATE TYPE MARKET AGE EXPIRES IP ALLOWED
+# Header — PROVIDER column prepended; STATE widened to 14 to fit
+# "initializing" / "shutting-down".
+printf '%-9s %-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' \
+    PROVIDER NAME STATE TYPE MARKET AGE EXPIRES IP ALLOWED
 
 now_epoch="$(date -u +%s)"
-printf '%s\n' "$rows" | while IFS=$'\t' read -r handle name state type market launch_epoch ip cidr shutdown_hours; do
+printf '%s\n' "$rows" | while IFS=$'\t' read -r provider handle name state type market launch_epoch ip cidr shutdown_hours; do
     age_sec=$(( now_epoch - launch_epoch ))
     if (( age_sec < 3600 )); then
         age="$(( age_sec / 60 ))m"
@@ -68,9 +99,7 @@ printf '%s\n' "$rows" | while IFS=$'\t' read -r handle name state type market la
         continue
     fi
 
-    # EXPIRES: time until the in-VM auto-shutdown timer would terminate the
-    # box. Computed from AutoShutdownHours tag + uptime. Negative means the
-    # timer is past due (typically <5 min lag from the systemd timer).
+    # EXPIRES: time until the box auto-terminates, from AutoShutdownHours + uptime.
     case "$shutdown_hours" in
         ""|"-"|"None")  expires="-" ;;
         "0")            expires="off" ;;
@@ -86,6 +115,6 @@ printf '%s\n' "$rows" | while IFS=$'\t' read -r handle name state type market la
             fi
             ;;
     esac
-    printf '%-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' \
-        "$name" "$state" "$type" "$market" "$age" "$expires" "$ip" "$cidr"
+    printf '%-9s %-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' \
+        "$provider" "$name" "$state" "$type" "$market" "$age" "$expires" "$ip" "$cidr"
 done

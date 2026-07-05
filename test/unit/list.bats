@@ -5,7 +5,7 @@ setup() {
     export SANDBOX_REPO_ROOT="$(mktemp -d)"
     mkdir -p "$SANDBOX_REPO_ROOT/lib/providers" "$SANDBOX_REPO_ROOT/bin"
     cp "$REPO_ROOT"/lib/{log,config,common,provider,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
-    cp "$REPO_ROOT/lib/providers/aws.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
+    cp "$REPO_ROOT"/lib/providers/{aws,gcp}.sh "$SANDBOX_REPO_ROOT/lib/providers/"
     cp "$REPO_ROOT/bin/sandbox-list" "$SANDBOX_REPO_ROOT/bin/"
     cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
 AWS_REGION="us-west-2"
@@ -13,6 +13,12 @@ EOF
     export AWS_STUB_LOG="$BATS_TEST_TMPDIR/aws.log"; : > "$AWS_STUB_LOG"
     export AWS_STUB_RESPONSE="$BATS_TEST_TMPDIR/aws-resp"
     export AWS_CMD="$REPO_ROOT/test/unit/stubs/aws-empty"
+    # GCP stub — hermetic. The default config leaves GCP_PROJECT unset, so the
+    # cross-cloud lister skips gcp; tests that want a gcp row set GCP_PROJECT +
+    # GCLOUD_STUB_RESPONSE themselves.
+    export GCLOUD_STUB_LOG="$BATS_TEST_TMPDIR/gcloud.log"; : > "$GCLOUD_STUB_LOG"
+    export GCLOUD_STUB_RESPONSE="$BATS_TEST_TMPDIR/gcloud-resp"
+    export GCLOUD_CMD="$REPO_ROOT/test/unit/stubs/gcloud-empty"
 }
 
 teardown() { rm -rf "$SANDBOX_REPO_ROOT"; }
@@ -64,4 +70,48 @@ EOF
     [[ "$output" == *"MARKET"* ]]
     echo "$output" | grep alpha-box | grep -q -w spot
     echo "$output" | grep beta-box  | grep -q on-demand
+}
+
+@test "list shows sandboxes from both aws and gcp with a PROVIDER column" {
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+AWS_REGION="us-west-2"
+GCP_PROJECT="proj"
+GCP_ZONE="us-west1-b"
+EOF
+    cat > "$AWS_STUB_RESPONSE" <<'EOF'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-aaa","InstanceType":"m7i-flex.xlarge","PublicIpAddress":"1.2.3.4",
+   "State":{"Name":"running"},"LaunchTime":"2026-05-12T10:00:00Z",
+   "Tags":[{"Key":"Name","Value":"sandbox-aws"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF
+    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+0
+[{"name":"sandbox-gcp","status":"RUNNING","machineType":"https://www.googleapis.com/compute/v1/projects/proj/zones/us-west1-b/machineTypes/e2-standard-4","creationTimestamp":"2026-05-12T10:00:00.000-07:00","scheduling":{"provisioningModel":"STANDARD"},"networkInterfaces":[{"accessConfigs":[{"natIP":"9.9.9.9"}]}],"metadata":{"items":[]},"tags":{"items":["sandbox-gcp"]}}]
+EOF
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"PROVIDER"* ]]
+    # each box tagged with its cloud
+    echo "$output" | grep sandbox-aws | grep -q -w aws
+    echo "$output" | grep sandbox-gcp | grep -q -w gcp
+    [[ "$output" == *"1.2.3.4"* ]]
+    [[ "$output" == *"9.9.9.9"* ]]
+}
+
+@test "list skips gcp silently when GCP_PROJECT is unset (no error, no gcp row)" {
+    cat > "$AWS_STUB_RESPONSE" <<'EOF'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-aaa","InstanceType":"m7i-flex.xlarge","PublicIpAddress":"1.2.3.4",
+   "State":{"Name":"running"},"LaunchTime":"2026-05-12T10:00:00Z",
+   "Tags":[{"Key":"Name","Value":"sandbox-aws"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep sandbox-aws | grep -q -w aws
+    # gcp had no creds → skipped, so it must not appear as a provider row
+    ! ( echo "$output" | grep -q -w gcp )
 }
