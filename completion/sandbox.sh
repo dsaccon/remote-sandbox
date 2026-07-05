@@ -21,18 +21,14 @@
 
 # --- Shared between both shells: live name / AMI lookups via the aws CLI. -----
 
-# _sandbox_cfg KEY — best-effort read of KEY's value from ./config (quotes,
-# trailing comment, and spaces stripped). Empty if unreadable/absent. Works in
-# both bash and zsh (plain parameter expansion, no shell-specific syntax).
+# _sandbox_cfg KEY — best-effort read of KEY's value from ./config (surrounding
+# quotes and any trailing comment/space stripped). Empty if unreadable/absent.
+# Done with sed, NOT shell parameter expansion: a `${v%%#*}` breaks under zsh
+# EXTENDED_GLOB, which reads a leading `#` in a pattern as a glob operator.
 _sandbox_cfg() {
     [[ -r "$_sandbox_config" ]] || return 0
-    local v
-    v="$(grep -E "^[[:space:]]*$1=" "$_sandbox_config" 2>/dev/null | head -1)"
-    v="${v#*=}"      # value after KEY=
-    v="${v%%#*}"     # strip trailing comment
-    v="${v//\"/}"    # strip double quotes
-    v="${v// /}"     # strip spaces
-    printf '%s' "$v"
+    sed -n "s/^[[:space:]]*$1=[\"']\{0,1\}\([^\"'[:space:]#]*\).*/\1/p" \
+        "$_sandbox_config" 2>/dev/null | head -1
 }
 
 # _sandbox_list_names — live sandbox names for the ACTIVE cloud (ssh/scp/down
