@@ -6,6 +6,9 @@ _SANDBOX_GCP_SH_LOADED=1
 _gcp_sh_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../log.sh
 source "$_gcp_sh_dir/../log.sh"
+# common.sh gives resolve_ssh_cidr (used by the bake); harmless if already loaded.
+# shellcheck source=../common.sh
+source "$_gcp_sh_dir/../common.sh"
 _gcp_repo_bootstrap="$(cd "$_gcp_sh_dir/../.." && pwd)/ami/bootstrap.sh"
 
 : "${GCLOUD_CMD:=gcloud}"
@@ -41,9 +44,113 @@ provider_preflight() {
     fi
 }
 
-provider_build_image() {
-    die "image baking not yet supported on gcp — bake out-of-band and set GCP_IMAGE (see docs)"
+# _gcp_build_image — bake a custom GCP image with the same tooling as the AWS
+# AMI (runs the same ami/bootstrap.sh). Writes GCP_IMAGE into ./config on
+# success. Mirrors _aws_build_image. Uses $REPO_ROOT (set by bin/sandbox-build-ami)
+# and $SSH_CMD/$SCP_CMD (stubbable in tests).
+_gcp_build_image() {
+    : "${SSH_CMD:=ssh}"
+    : "${SCP_CMD:=scp}"
+    : "${GCP_PROJECT:?build-ami: GCP_PROJECT not set}"
+    : "${GCP_ZONE:?build-ami: GCP_ZONE not set}"
+    : "${SSH_KEY_FILE:?build-ami: SSH_KEY_FILE not set}"
+    local pub="${GCP_SSH_PUBKEY:-${SSH_KEY_FILE}.pub}"
+    [[ -r "$pub" ]] || die "SSH public key not readable: $pub (set GCP_SSH_PUBKEY)"
+    [[ -r "$SSH_KEY_FILE" ]] || die "SSH key file not readable: $SSH_KEY_FILE"
+
+    provider_check_creds
+
+    local bake_machine="e2-medium"
+    # bake_name / kf / cleanup_on_failure are NOT local: the EXIT trap below
+    # references them, and it fires after this function has returned (when its
+    # locals would be out of scope, tripping `set -u`).
+    bake_name="sandbox-bake-$(date -u +%Y%m%d-%H%M%S)"
+    local cidr; cidr="$(resolve_ssh_cidr)"
+
+    log_info "creating bake firewall ${bake_name}-fw (SSH from $cidr)"
+    _gcloud compute firewall-rules create "${bake_name}-fw" \
+        --network=default --direction=INGRESS --action=ALLOW \
+        --rules=tcp:22 --source-ranges="$cidr" --target-tags="$bake_name" >/dev/null
+
+    kf="$(mktemp)"
+    printf '%s:%s\n' "${SSH_USER:-ubuntu}" "$(cat "$pub")" > "$kf"
+
+    # Leave the VM + firewall up on failure so the bake can be debugged.
+    cleanup_on_failure=1
+    trap '
+        rm -f "$kf"
+        if [[ $cleanup_on_failure -eq 1 ]]; then
+            log_warn "bake failed; leaving $bake_name up for debugging."
+            _ip="$(_gcloud compute instances describe "$bake_name" --zone="$GCP_ZONE" --format="value(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || echo "?")"
+            echo "  Debug:  ssh ${SSH_USER:-ubuntu}@${_ip}"
+            echo "  Tear down:"
+            echo "    gcloud compute instances delete $bake_name --zone $GCP_ZONE --project $GCP_PROJECT --quiet"
+            echo "    gcloud compute firewall-rules delete ${bake_name}-fw --project $GCP_PROJECT --quiet"
+        fi' EXIT
+
+    log_info "launching bake VM ($bake_machine) as $bake_name..."
+    _gcloud compute instances create "$bake_name" --zone="$GCP_ZONE" \
+        --machine-type="$bake_machine" \
+        --image-family="$GCP_IMAGE_FAMILY" --image-project="$GCP_IMAGE_PROJECT" \
+        --tags="$bake_name" \
+        --metadata-from-file="ssh-keys=$kf" \
+        --format="value(name)" >/dev/null
+    rm -f "$kf"
+
+    local ip
+    ip="$(_gcloud compute instances describe "$bake_name" --zone="$GCP_ZONE" \
+        --format="value(networkInterfaces[0].accessConfigs[0].natIP)")"
+    log_info "bake VM IP: $ip"
+
+    local ssh_opts=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes \
+        -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null \
+        -o LogLevel=ERROR -o ConnectTimeout=10)
+
+    log_info "waiting for SSH..."
+    local i
+    for i in $(seq 1 30); do
+        if "$SSH_CMD" "${ssh_opts[@]}" "${SSH_USER:-ubuntu}@${ip}" true 2>/dev/null; then
+            break
+        fi
+        sleep 5
+        [[ "$i" -eq 30 ]] && die "SSH never came up on $ip"
+    done
+
+    log_info "uploading bootstrap files..."
+    "$SCP_CMD" "${ssh_opts[@]}" \
+        "$REPO_ROOT/ami/bootstrap.sh" \
+        "$REPO_ROOT/ami/systemd/auto-shutdown.service" \
+        "$REPO_ROOT/ami/systemd/auto-shutdown.timer" \
+        "$REPO_ROOT/ami/xterm-ghostty.src" \
+        "${SSH_USER:-ubuntu}@${ip}:/tmp/"
+
+    log_info "running bootstrap (this can take 5-10 minutes)..."
+    "$SSH_CMD" "${ssh_opts[@]}" "${SSH_USER:-ubuntu}@${ip}" \
+        "DOTFILES_REPO='${DOTFILES_REPO:-}' CLAUDE_HARDENING_REPO='${CLAUDE_HARDENING_REPO:-}' bash /tmp/bootstrap.sh"
+
+    # Stop before imaging: GCP can't image a disk attached to a running VM
+    # (the analog of AWS's reboot-before-snapshot for a consistent disk).
+    log_info "stopping bake VM to image its disk cleanly..."
+    _gcloud compute instances stop "$bake_name" --zone="$GCP_ZONE" >/dev/null
+
+    local img_name; img_name="claude-sandbox-$(date -u +%Y%m%d-%H%M%S)"
+    log_info "creating image $img_name (family claude-sandbox)..."
+    _gcloud compute images create "$img_name" \
+        --source-disk="$bake_name" --source-disk-zone="$GCP_ZONE" \
+        --family=claude-sandbox >/dev/null
+
+    log_info "writing GCP_IMAGE into ./config"
+    config_write_key GCP_IMAGE "$img_name"
+
+    log_info "deleting bake VM + firewall..."
+    _gcloud compute instances delete "$bake_name" --zone="$GCP_ZONE" --quiet >/dev/null
+    _gcloud compute firewall-rules delete "${bake_name}-fw" --quiet >/dev/null 2>&1 || true
+
+    cleanup_on_failure=0
+    log_info "done. GCP_IMAGE=$img_name"
 }
+
+provider_build_image() { _gcp_build_image; }
 
 # gcp_render_startup NAME REPO -> startup-script text on stdout.
 # No baked image: run ami/bootstrap.sh at first boot, then optional clone.

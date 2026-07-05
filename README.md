@@ -106,17 +106,20 @@ GCP_PROJECT="your-project-id"
 exports it for `gcloud`, printing `init: GOOGLE_APPLICATION_CREDENTIALS set
 for gcloud` when the path exists.
 
-`up`, `list`, `ssh`, `scp`, `down`, and `spot` all work the same as AWS.
-Two differences to know about:
+`up`, `list`, `ssh`, `scp`, `down`, `spot`, and `build-ami` all work the same
+as AWS. Two differences to know about:
 
-- **First boot is slow without a baked image.** With `GCP_IMAGE` unset (the
+- **First boot is slow until you bake an image.** With `GCP_IMAGE` unset (the
   default), each `up` boots a stock `ubuntu-2404-lts` instance and runs the
-  full bootstrap at first boot instead of off a pre-baked image — expect
-  ~5-10 minutes before the box is usable, vs. ~60-90s on AWS.
-- **`build-ami` / `list-amis` / `delete-ami` are AWS-only for now.** There's
-  no GCP equivalent yet. For fast boots on GCP, bake a custom image
-  out-of-band (`gcloud compute images create ...` from a bootstrapped
-  instance) and set `GCP_IMAGE` in `./config` to its name.
+  full bootstrap at first boot — ~5-10 minutes before the box is usable, vs.
+  ~60-90s off a baked image. Run `./bin/sandbox build-ami` once (with
+  `CLOUD=gcp`, or `build-ami --cloud gcp`) to bake a custom image; it writes
+  `GCP_IMAGE` into `./config` and subsequent boots are fast. The GCP bake runs
+  the same `ami/bootstrap.sh` as AWS, so the image has the identical toolset.
+- **`list-amis` / `delete-ami` are AWS-only for now** (CLI management of baked
+  GCP images is a follow-up). Meanwhile `gcloud compute images list
+  --filter="family=claude-sandbox"` and `gcloud compute images delete <name>`
+  do the job.
 
 ## Each new terminal
 
@@ -195,7 +198,8 @@ for details on any subcommand.
 ./bin/sandbox down --stale 24h         # terminate boxes older than 24h (asks to confirm)
 ./bin/sandbox down --all --cloud aws   #   ...restrict a bulk terminate to one cloud
 
-./bin/sandbox build-ami                # bake a fresh AMI
+./bin/sandbox build-ami                # bake a fresh image for CLOUD (aws AMI / gcp image)
+./bin/sandbox build-ami --cloud gcp    #   ...bake for a specific cloud
 ./bin/sandbox list-amis                # list AMIs you own (CURRENT=yes for the in-use one)
 ./bin/sandbox list-amis --active       #   ...only AMIs in use (current + any in-use)
 ./bin/sandbox delete-ami <ami-id> [...] # delete old AMIs (+ their snapshots)

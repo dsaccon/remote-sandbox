@@ -11,29 +11,36 @@ source "$REPO_ROOT/lib/config.sh"
 # shellcheck source=../lib/provider.sh
 source "$REPO_ROOT/lib/provider.sh"
 
-case "${1:-}" in
-    -h|--help)
-        cat <<'EOF'
-Usage: sandbox build-ami
+usage() {
+    cat <<'EOF'
+Usage: sandbox build-ami [--cloud aws|gcp]
 
-Bake a fresh AMI:
-  1. Find latest Ubuntu 24.04 amd64 AMI in $AWS_REGION (Canonical owner).
-  2. Launch a t3.medium bake VM from it.
-  3. Wait for SSH, scp ami/bootstrap.sh + systemd units to the VM.
-  4. Run bootstrap.sh (~5-10 min): installs node, uv, docker, nvim, gh,
-     and clones claude-hardening (+ DOTFILES_REPO if set) into the home dir.
-  5. Create AMI from the bake VM, wait for `available`.
-  6. Write the new AMI_ID into ./config, terminate the bake VM.
+Bake a fresh image for the active cloud (CLOUD in ./config, or --cloud). Both
+run the same ami/bootstrap.sh (installs node, uv, docker, nvim, gh, shellcheck,
+bats, etc.; clones claude-hardening + DOTFILES_REPO if set). ~5-10 min.
 
-On failure during bootstrap the bake VM is left running; you'll see an
-SSH command to debug it and `sandbox down i-... ` to tear it down.
+  AWS: t3.medium from the latest Ubuntu 24.04 amd64 AMI -> create an AMI ->
+       write AMI_ID into ./config, terminate the bake VM.
+  GCP: e2-medium from ubuntu-2404-lts-amd64 -> stop the VM -> create a custom
+       image (family claude-sandbox) -> write GCP_IMAGE into ./config, delete
+       the bake VM + firewall.
 
-Cost: ~$0.007 per bake plus ~$1.50/month per AMI snapshot retained.
+On failure the bake VM is left up with a debug SSH command and a teardown hint.
 EOF
-        exit 0
-        ;;
-esac
+}
+
+CLOUD_FLAG=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help) usage; exit 0 ;;
+        --cloud)
+            case "${2:-}" in aws|gcp) ;; *) die "unknown --cloud '${2:-}' (supported: aws, gcp)" ;; esac
+            CLOUD_FLAG="$2"; shift 2 ;;
+        *) die "unknown arg: $1 (try 'sandbox build-ami --help')" ;;
+    esac
+done
 
 config_load
+[[ -n "$CLOUD_FLAG" ]] && config_set_from_flag CLOUD "$CLOUD_FLAG"
 provider_load
 provider_build_image

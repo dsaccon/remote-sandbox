@@ -5,7 +5,7 @@ setup() {
     export SANDBOX_REPO_ROOT="$(mktemp -d)"
     mkdir -p "$SANDBOX_REPO_ROOT/lib/providers" "$SANDBOX_REPO_ROOT/ami/systemd" "$SANDBOX_REPO_ROOT/bin"
     cp "$REPO_ROOT"/lib/{log,config,common,provider,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
-    cp "$REPO_ROOT/lib/providers/aws.sh" "$SANDBOX_REPO_ROOT/lib/providers/"
+    cp "$REPO_ROOT"/lib/providers/{aws,gcp}.sh "$SANDBOX_REPO_ROOT/lib/providers/"
     cp "$REPO_ROOT/ami/bootstrap.sh" "$SANDBOX_REPO_ROOT/ami/"
     cp "$REPO_ROOT"/ami/systemd/*.{service,timer} "$SANDBOX_REPO_ROOT/ami/systemd/"
     cp "$REPO_ROOT/bin/sandbox-build-ami" "$SANDBOX_REPO_ROOT/bin/"
@@ -19,6 +19,9 @@ EOF
     export AWS_STUB_LOG="$BATS_TEST_TMPDIR/aws.log"; : > "$AWS_STUB_LOG"
     export AWS_STUB_RESPONSE="$BATS_TEST_TMPDIR/aws-resp"
     export AWS_CMD="$REPO_ROOT/test/unit/stubs/aws-empty"
+    export GCLOUD_STUB_LOG="$BATS_TEST_TMPDIR/gcloud.log"; : > "$GCLOUD_STUB_LOG"
+    export GCLOUD_STUB_RESPONSE="$BATS_TEST_TMPDIR/gcloud-resp"
+    export GCLOUD_CMD="$REPO_ROOT/test/unit/stubs/gcloud-empty"
     # ssh / scp stubs that succeed silently.
     export SSH_CMD="$BATS_TEST_TMPDIR/ssh-ok"
     export SCP_CMD="$BATS_TEST_TMPDIR/scp-ok"
@@ -63,4 +66,31 @@ EOF
     grep -q -- 'ec2 wait image-available' "$AWS_STUB_LOG"
     grep -q -- 'ec2 terminate-instances' "$AWS_STUB_LOG"
     grep -q '^AMI_ID="ami-new123"' "$SANDBOX_REPO_ROOT/config"
+}
+
+@test "build-ami --cloud gcp bakes a custom image and writes GCP_IMAGE" {
+    cat > "$SANDBOX_REPO_ROOT/config" <<EOF
+CLOUD="aws"
+GCP_PROJECT="proj"
+GCP_ZONE="us-west1-b"
+SSH_USER="ubuntu"
+SSH_INGRESS_CIDR="1.2.3.4/32"
+GCP_SSH_PUBKEY="$BATS_TEST_TMPDIR/id.pub"
+EOF
+    echo "ssh-ed25519 AAAA test" > "$BATS_TEST_TMPDIR/id.pub"
+    # gcloud stub returns an IP for the `instances describe … natIP` call.
+    printf '0\n5.6.7.8\n' > "$GCLOUD_STUB_RESPONSE"
+
+    # --cloud gcp overrides the config CLOUD=aws → the gcp bake runs.
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-build-ami" --cloud gcp
+    [ "$status" -eq 0 ]
+    grep -q -- 'compute firewall-rules create sandbox-bake-' "$GCLOUD_STUB_LOG"
+    grep -q -- 'compute instances create sandbox-bake-' "$GCLOUD_STUB_LOG"
+    grep -q -- 'compute instances stop sandbox-bake-' "$GCLOUD_STUB_LOG"
+    grep -q -- 'compute images create claude-sandbox-' "$GCLOUD_STUB_LOG"
+    grep -q -- 'compute instances delete sandbox-bake-' "$GCLOUD_STUB_LOG"
+    grep -q -- 'compute firewall-rules delete sandbox-bake-' "$GCLOUD_STUB_LOG"
+    # No AWS calls happened — this baked gcp, not aws.
+    [ ! -s "$AWS_STUB_LOG" ]
+    grep -q '^GCP_IMAGE="claude-sandbox-' "$SANDBOX_REPO_ROOT/config"
 }
