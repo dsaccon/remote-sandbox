@@ -40,10 +40,11 @@ _SANDBOX_CACHE_TTL=5
 _sandbox_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
 
 # Lightweight completion loader. While a COLD lookup queries the clouds (a few
-# seconds), animate "searching aws + gcp ." → ".." → "..." on the input line;
-# readline/zle redraws the line when completion returns, so the overwrite is
-# transient. A warm cache returns instantly and never spins. Set
-# SANDBOX_COMPLETION_SPINNER=0 to disable if your terminal dislikes the redraw.
+# seconds), animate "searching aws + gcp ." → ".." → "..." on the line BELOW the
+# prompt, bracketed by DEC save/restore-cursor (ESC 7 / ESC 8) so readline's own
+# line and cursor are never touched (touching them desyncs readline's redraw and
+# garbles the prompt). A warm cache returns instantly and never spins. Set
+# SANDBOX_COMPLETION_SPINNER=0 to disable.
 _sandbox_spin_pid=""
 _sandbox_spin_start() {
     [[ "${SANDBOX_COMPLETION_SPINNER:-1}" == 0 ]] && return 0
@@ -56,8 +57,9 @@ _sandbox_spin_start() {
         i=0
         while [ "$i" -lt 33 ]; do
             for d in '.' '..' '...'; do
-                # 2>/dev/null BEFORE >/dev/tty so a failed redirection stays quiet.
-                printf '\r\033[K\033[2msearching aws + gcp %s\033[0m' "$d" 2>/dev/null > /dev/tty
+                # ESC7 save · \n down to a scratch line · clear it · draw · ESC8
+                # restore. 2>/dev/null BEFORE >/dev/tty keeps a failed redirect quiet.
+                printf '\0337\n\r\033[K\033[2msearching aws + gcp %s\033[0m\0338' "$d" 2>/dev/null > /dev/tty
                 sleep 0.3
                 i=$((i + 1))
             done
@@ -70,7 +72,8 @@ _sandbox_spin_start() {
 _sandbox_spin_stop() {
     [[ -n "$_sandbox_spin_pid" ]] || return 0
     kill "$_sandbox_spin_pid" 2>/dev/null || true
-    printf '\r\033[K' 2>/dev/null > /dev/tty    # erase spinner; readline redraws the line
+    # Erase the scratch line below and put the cursor back on the prompt line.
+    printf '\0337\n\r\033[K\0338' 2>/dev/null > /dev/tty
     _sandbox_spin_pid=""
 }
 
