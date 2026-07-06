@@ -31,69 +31,31 @@ _sandbox_cfg() {
         "$_sandbox_config" 2>/dev/null | head -1
 }
 
-# Seconds to reuse the completion name cache. The first Tab queries the clouds;
-# repeat Tabs within this window return instantly. Short so a box you just
-# up'd/down'd shows up again quickly.
-_SANDBOX_CACHE_TTL=5
+# Seconds to reuse the completion cache. The first Tab in a while queries the
+# clouds; repeat Tabs within this window return instantly (no round-trip). Kept
+# short enough that a box you just up'd/down'd — or an image you just baked —
+# reappears quickly. (No spinner: drawing to the terminal mid-completion fights
+# readline's own redraw and garbles the prompt, so we just make it fast.)
+_SANDBOX_CACHE_TTL=15
 
 # _sandbox_mtime FILE — file mtime as a unix epoch (macOS then GNU stat).
 _sandbox_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
 
-# Lightweight completion loader. While a COLD lookup queries the clouds (a few
-# seconds), animate "searching aws + gcp ." → ".." → "..." on the line BELOW the
-# prompt, bracketed by DEC save/restore-cursor (ESC 7 / ESC 8) so readline's own
-# line and cursor are never touched (touching them desyncs readline's redraw and
-# garbles the prompt). A warm cache returns instantly and never spins. Set
-# SANDBOX_COMPLETION_SPINNER=0 to disable.
-_sandbox_spin_pid=""
-_sandbox_spin_start() {
-    [[ "${SANDBOX_COMPLETION_SPINNER:-1}" == 0 ]] && return 0
-    # Probe REAL writability: `-w /dev/tty` passes on macOS even with no
-    # controlling terminal, and the write then fails with "Device not
-    # configured". Opening it via a group with 2>/dev/null swallows that.
-    { true > /dev/tty; } 2>/dev/null || return 0
-    {
-        # Self-cap (~10s) so a hung query can never leave the spinner running.
-        i=0
-        while [ "$i" -lt 33 ]; do
-            for d in '.' '..' '...'; do
-                # ESC7 save · \n down to a scratch line · clear it · draw · ESC8
-                # restore. 2>/dev/null BEFORE >/dev/tty keeps a failed redirect quiet.
-                printf '\0337\n\r\033[K\033[2msearching aws + gcp %s\033[0m\0338' "$d" 2>/dev/null > /dev/tty
-                sleep 0.3
-                i=$((i + 1))
-            done
-        done
-    } &
-    _sandbox_spin_pid=$!
-    # disown so killing it later prints no job-control "Terminated" notice.
-    disown 2>/dev/null || true
-}
-_sandbox_spin_stop() {
-    [[ -n "$_sandbox_spin_pid" ]] || return 0
-    kill "$_sandbox_spin_pid" 2>/dev/null || true
-    # Erase the scratch line below and put the cursor back on the prompt line.
-    printf '\0337\n\r\033[K\0338' 2>/dev/null > /dev/tty
-    _sandbox_spin_pid=""
-}
-
 # _sandbox_cached TAG FRESH_FN — print FRESH_FN's output, cached per config for
-# a few seconds so repeated Tab presses don't re-hit the cloud APIs. Cold/stale
-# → run FRESH_FN (slow) behind the spinner; warm → just cat the file (instant,
-# no spinner). Atomic rename so a concurrent Tab never reads a half-written file.
+# _SANDBOX_CACHE_TTL seconds so repeated Tab presses don't re-hit the cloud APIs.
+# Cold/stale → run FRESH_FN and refresh via a temp file + atomic rename (so a
+# concurrent Tab never reads a half-written cache); warm → just cat the file.
 _sandbox_cached() {
     local tag="$1" fresh="$2" key cache now m
     key="$(printf '%s' "${_sandbox_config:-}" | cksum | cut -d' ' -f1)"
     cache="${TMPDIR:-/tmp}/sandbox-${tag}-$(id -u)-${key}"
     now="$(date +%s)"; m="$(_sandbox_mtime "$cache")"
     if [[ -z "$m" ]] || (( now - m >= _SANDBOX_CACHE_TTL )); then
-        _sandbox_spin_start
         if "$fresh" > "$cache.$$" 2>/dev/null; then
             mv -f "$cache.$$" "$cache" 2>/dev/null || rm -f "$cache.$$" 2>/dev/null
         else
             rm -f "$cache.$$" 2>/dev/null
         fi
-        _sandbox_spin_stop
     fi
     cat "$cache" 2>/dev/null
 }
