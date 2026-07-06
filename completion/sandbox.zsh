@@ -1,7 +1,7 @@
 # completion/sandbox.zsh — native zsh (compsys) completion for ./bin/sandbox.
 #
 # Sourced ONLY under zsh, by completion/sandbox.sh — which first runs compinit
-# and which also defines the shared _sandbox_list_names / _sandbox_list_amis
+# and which also defines the shared _sandbox_list_names / _sandbox_list_images
 # helpers this file calls. Bash never reads this file, so it is free to use
 # native zsh/compsys syntax (${(f)...}, _files, _message, _describe).
 #
@@ -23,11 +23,12 @@ _sandbox_names() {
     (( ${#names} )) && _describe -t sandboxes 'sandbox' names
 }
 
-# _sandbox_amis — complete a claude-sandbox-* AMI id you own.
-_sandbox_amis() {
-    local out; out="$(_sandbox_list_amis)"
-    local -a amis; amis=( ${(f)out} )
-    (( ${#amis} )) && _describe -t amis 'AMI' amis
+# _sandbox_images — complete a baked-image identifier across both clouds
+# (AWS AMI id / GCP image name).
+_sandbox_images() {
+    local out; out="$(_sandbox_list_images)"
+    local -a imgs; imgs=( ${(f)out} )
+    (( ${#imgs} )) && _describe -t images 'image' imgs
 }
 
 _sandbox() {
@@ -43,9 +44,11 @@ _sandbox() {
             'ssh:SSH into a sandbox'
             'scp:upload a local file/dir to a sandbox'
             'spot:show or set the standing spot default'
-            'build-ami:bake a fresh AMI'
-            'list-amis:list AMIs you own'
-            'delete-ami:deregister AMIs and delete their snapshots'
+            'build-ami:bake a fresh image (aws AMI / gcp custom image)'
+            'list-images:list baked images across both clouds'
+            'delete-image:delete baked images across both clouds'
+            'list-amis:alias for list-images'
+            'delete-ami:alias for delete-image'
             '--help:show help'
         )
         _describe -t commands 'sandbox command' commands
@@ -161,8 +164,8 @@ _sandbox() {
             _describe -t options 'option' opts
             ;;
 
-        list-amis)
-            local -a opts; opts=('--active:only the ready ones' '--help:show help')
+        list-amis|list-images)
+            local -a opts; opts=('--active:only images in use' '--cloud:restrict to one cloud (aws|gcp)' '--help:show help')
             _describe -t options 'option' opts
             ;;
 
@@ -179,12 +182,14 @@ _sandbox() {
             ;;
 
         build-ami)
-            local -a opts; opts=('--help:show help')
+            local -a opts; opts=('--cloud:bake for a specific cloud (aws|gcp)' '--help:show help')
             _describe -t options 'option' opts
             ;;
 
-        delete-ami)
-            _sandbox_amis
+        delete-ami|delete-image)
+            _sandbox_images
+            local -a opts; opts=('--cloud:restrict to one cloud (aws|gcp)' '--force:allow deleting the current image' '--help:show help')
+            _describe -t options 'option' opts
             ;;
     esac
 }

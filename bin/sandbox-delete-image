@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# bin/sandbox-delete-image — delete baked images across BOTH clouds: an AWS AMI
+# (+ its EBS snapshot) or a GCP custom image. Cross-cloud, like `down`.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/multicloud.sh
+source "$REPO_ROOT/lib/multicloud.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: sandbox delete-image [--cloud aws|gcp] [--force] <id|name> [<id|name>...]
+
+Delete baked images, found in whichever cloud they live in. For an AWS AMI this
+deregisters it and deletes its EBS snapshot; for a GCP image it deletes the
+image. Refuses to delete the CURRENT image (the one in ./config that `up` boots
+from) unless --force.
+
+  --cloud aws|gcp  Restrict the search to one cloud.
+  --force          Allow deleting the current image.
+
+Alias: delete-ami. Run `sandbox list-images` to see ids/names.
+EOF
+}
+
+scope=""
+force=0
+args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)   usage; exit 0 ;;
+        --force)     force=1; shift ;;
+        --cloud)     [[ -n "${2:-}" ]] || die "--cloud requires a value (aws|gcp)"
+                     mc_valid_cloud "$2"; scope="$2"; shift 2 ;;
+        --cloud=*)   scope="${1#*=}"; mc_valid_cloud "$scope"; shift ;;
+        -*)          die "unknown flag: $1 (try 'sandbox delete-image --help')" ;;
+        *)           args+=("$1"); shift ;;
+    esac
+done
+
+[[ ${#args[@]} -ge 1 ]] || { usage >&2; exit 2; }
+
+config_load
+
+# Resolve every arg up front (die on not-found / ambiguous / current-without-
+# force) so a mixed valid/invalid list never half-completes.
+sel=""
+for q in "${args[@]}"; do
+    match="$(mc_find_image "$q" "$scope")"
+    IFS=$'\t' read -r provider id name epoch size current in_use <<< "$match"
+    if [[ "$current" == "1" && "$force" -ne 1 ]]; then
+        die "refusing to delete '$q' — it's the current $provider image in ./config (use --force to override)"
+    fi
+    sel+="${provider}"$'\t'"${id}"$'\n'
+done
+
+printf '%s' "$sel" | mc_delete_image

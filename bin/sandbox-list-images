@@ -1,0 +1,77 @@
+#!/usr/bin/env bash
+# bin/sandbox-list-images — list baked images across BOTH clouds: AWS AMIs and
+# GCP custom images (claude-sandbox family). Cross-cloud, like `list`.
+
+set -euo pipefail
+
+REPO_ROOT="${SANDBOX_REPO_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+# shellcheck source=../lib/log.sh
+source "$REPO_ROOT/lib/log.sh"
+# shellcheck source=../lib/config.sh
+source "$REPO_ROOT/lib/config.sh"
+# shellcheck source=../lib/multicloud.sh
+source "$REPO_ROOT/lib/multicloud.sh"
+
+usage() {
+    cat <<'EOF'
+Usage: sandbox list-images [--active] [--cloud aws|gcp]
+
+List baked images across both clouds: AWS AMIs and GCP custom images
+(claude-sandbox family). Newest first, grouped by cloud. Columns:
+  PROVIDER, CURRENT (`yes` = the image in ./config that `up` boots from —
+  AMI_ID for aws, GCP_IMAGE for gcp), ID, NAME, AGE, SIZE.
+
+  --active         Only images in use — the ./config image, plus (on aws) any
+                   AMI a non-terminated sandbox booted from. The rest are safe
+                   to drop with `sandbox delete-image`.
+  --cloud aws|gcp  Restrict to one cloud.
+
+Alias: list-amis. Use `sandbox delete-image <id|name>` to remove old ones.
+EOF
+}
+
+only_active=0
+scope=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)   usage; exit 0 ;;
+        --active)    only_active=1; shift ;;
+        --cloud)     [[ -n "${2:-}" ]] || die "--cloud requires a value (aws|gcp)"
+                     mc_valid_cloud "$2"; scope="$2"; shift 2 ;;
+        --cloud=*)   scope="${1#*=}"; mc_valid_cloud "$scope"; shift ;;
+        *)           die "unknown arg: $1 (try 'sandbox list-images --help')" ;;
+    esac
+done
+
+config_load
+
+rows="$(provider_images_all "$scope")"
+if [[ -z "$rows" ]]; then
+    if [[ -n "$scope" ]]; then
+        echo "no claude-sandbox images in $scope"
+    else
+        echo "no claude-sandbox images (aws or gcp)"
+    fi
+    exit 0
+fi
+
+printf '%-9s %-9s %-32s %-34s %-10s %-6s\n' PROVIDER CURRENT ID NAME AGE SIZE
+
+now="$(date -u +%s)"
+printf '%s\n' "$rows" | while IFS=$'\t' read -r provider id name epoch size current in_use; do
+    [[ -z "$provider" ]] && continue
+    [[ "$only_active" -eq 1 && "$in_use" != "1" ]] && continue
+
+    age_sec=$(( now - epoch ))
+    (( age_sec < 0 )) && age_sec=0
+    if (( age_sec < 3600 )); then
+        age="$(( age_sec / 60 ))m"
+    elif (( age_sec < 86400 )); then
+        age="$(( age_sec / 3600 ))h$(( (age_sec % 3600) / 60 ))m"
+    else
+        age="$(( age_sec / 86400 ))d"
+    fi
+
+    mark=""; [[ "$current" == "1" ]] && mark="yes"
+    printf '%-9s %-9s %-32s %-34s %-10s %-6s\n' "$provider" "$mark" "$id" "$name" "$age" "${size}G"
+done

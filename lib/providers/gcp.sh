@@ -152,6 +152,32 @@ _gcp_build_image() {
 
 provider_build_image() { _gcp_build_image; }
 
+# provider_list_images — normalized image records for GCP custom images in the
+# claude-sandbox family, newest first (6 fields):
+#   id  name  created_epoch  size_gb  current  in_use
+# GCP images are name-addressed (id == name). Deleting an image doesn't affect
+# already-running VMs, so in_use == current (the GCP_IMAGE in ./config).
+provider_list_images() {
+    local json current="${GCP_IMAGE:-}"
+    json="$(_gcloud compute images list --filter="family=claude-sandbox" --format=json 2>/dev/null || echo '[]')"
+    printf '%s' "$json" | jq -r '
+        sort_by(.creationTimestamp) | reverse | .[] |
+        [ .name, .name, .creationTimestamp, (.diskSizeGb // 0) ] | @tsv' \
+    | while IFS=$'\t' read -r id name created size; do
+        local epoch cur
+        epoch="$(gcp_ts_to_epoch "$created")"
+        cur=0; [[ -n "$current" && "$name" == "$current" ]] && cur=1
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$name" "$epoch" "$size" "$cur" "$cur"
+    done
+}
+
+# provider_delete_image NAME — delete a GCP custom image.
+provider_delete_image() {
+    local name="$1"
+    log_info "deleting image $name"
+    _gcloud compute images delete "$name" --quiet >/dev/null
+}
+
 # gcp_render_startup NAME REPO -> startup-script text on stdout.
 # No baked image: run ami/bootstrap.sh at first boot, then optional clone.
 # Baked image (GCP_IMAGE set): just hostname + optional clone.

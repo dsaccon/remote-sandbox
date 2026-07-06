@@ -84,14 +84,24 @@ _sandbox_names_gcp() {
         --filter="labels.project=claude-sandbox" --format="value(name)" 2>/dev/null
 }
 
-_sandbox_list_amis() {
-    # AMI IDs for claude-sandbox-* AMIs the caller owns. Silent failure
-    # → empty output (same UX as _sandbox_list_names).
+_sandbox_list_images() {
+    # Identifiers you can pass to delete-image, across BOTH clouds: AWS AMI ids
+    # + GCP image names. Both queried in parallel; silent failure → empty (same
+    # UX as _sandbox_list_names).
+    sort -u <(_sandbox_images_aws 2>/dev/null) <(_sandbox_images_gcp 2>/dev/null)
+}
+_sandbox_images_aws() {
     local region="${AWS_DEFAULT_REGION:-${AWS_REGION:-us-west-2}}"
     aws ec2 describe-images --region "$region" --owners self \
         --filters 'Name=name,Values=claude-sandbox-*' \
         --query 'Images[].ImageId' --output text 2>/dev/null \
         | tr '\t' '\n'
+}
+_sandbox_images_gcp() {
+    local proj; proj="$(_sandbox_cfg GCP_PROJECT)"
+    [[ -z "$proj" ]] && return 0
+    gcloud compute images list --project "$proj" \
+        --filter="family=claude-sandbox" --format="value(name)" 2>/dev/null
 }
 
 # Directory of THIS file, so the zsh branch can find sandbox.zsh. Resolves in
@@ -145,7 +155,7 @@ else
         # Word 1: top-level subcommand or top-level help flag.
         if [[ $COMP_CWORD -eq 1 ]]; then
             # shellcheck disable=SC2207
-            COMPREPLY=( $(compgen -W "up down list ssh scp spot build-ami list-amis delete-ami --help -h help" -- "$cur") )
+            COMPREPLY=( $(compgen -W "up down list ssh scp spot build-ami list-images delete-image list-amis delete-ami --help -h help" -- "$cur") )
             return
         fi
 
@@ -254,9 +264,14 @@ else
                 fi
                 ;;
 
-            list-amis)
-                # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "--active --help" -- "$cur") )
+            list-amis|list-images)
+                if [[ "$prev" == "--cloud" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                else
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "--active --cloud --help" -- "$cur") )
+                fi
                 ;;
 
             spot)
@@ -265,15 +280,25 @@ else
                 ;;
 
             build-ami)
-                # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "--help" -- "$cur") )
+                if [[ "$prev" == "--cloud" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                else
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "--cloud --help" -- "$cur") )
+                fi
                 ;;
 
-            delete-ami)
-                local amis
-                amis="$(_sandbox_list_amis)"
-                # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "$amis --help" -- "$cur") )
+            delete-ami|delete-image)
+                if [[ "$prev" == "--cloud" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                else
+                    local imgs
+                    imgs="$(_sandbox_list_images)"
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "$imgs --cloud --force --help" -- "$cur") )
+                fi
                 ;;
         esac
     }

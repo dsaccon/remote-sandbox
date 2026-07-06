@@ -116,10 +116,9 @@ as AWS. Two differences to know about:
   `CLOUD=gcp`, or `build-ami --cloud gcp`) to bake a custom image; it writes
   `GCP_IMAGE` into `./config` and subsequent boots are fast. The GCP bake runs
   the same `ami/bootstrap.sh` as AWS, so the image has the identical toolset.
-- **`list-amis` / `delete-ami` are AWS-only for now** (CLI management of baked
-  GCP images is a follow-up). Meanwhile `gcloud compute images list
-  --filter="family=claude-sandbox"` and `gcloud compute images delete <name>`
-  do the job.
+- **`list-images` / `delete-image` span both clouds** (with a `PROVIDER`
+  column), so your baked GCP images show up there alongside AWS AMIs — no need
+  to drop to raw `gcloud`.
 
 ## Each new terminal
 
@@ -200,9 +199,13 @@ for details on any subcommand.
 
 ./bin/sandbox build-ami                # bake a fresh image for CLOUD (aws AMI / gcp image)
 ./bin/sandbox build-ami --cloud gcp    #   ...bake for a specific cloud
-./bin/sandbox list-amis                # list AMIs you own (CURRENT=yes for the in-use one)
-./bin/sandbox list-amis --active       #   ...only AMIs in use (current + any in-use)
-./bin/sandbox delete-ami <ami-id> [...] # delete old AMIs (+ their snapshots)
+./bin/sandbox list-images              # baked images across BOTH clouds (PROVIDER column;
+                                        #   CURRENT=yes for the ./config image `up` boots from)
+./bin/sandbox list-images --active     #   ...only images in use
+./bin/sandbox list-images --cloud gcp  #   ...only one cloud   (alias: list-amis)
+./bin/sandbox delete-image <id|name>… # delete old images in whichever cloud they live in
+                                        #   (AMI + snapshot on aws, image on gcp; alias: delete-ami)
+./bin/sandbox delete-image <id> --force #   ...allow deleting the current image
 ```
 
 ### Working across both clouds
@@ -216,15 +219,17 @@ that acts on an *existing* box works across **both** clouds regardless of
   lives in — you don't switch `CLOUD` to reach an AWS box from a gcp default.
 - `down --all` / `down --stale` span both clouds, print what they'll terminate,
   and ask for confirmation (`--yes` skips it).
+- `list-images` / `delete-image` span both clouds too (AWS AMIs + GCP images).
 
 Add `--cloud aws|gcp` to any of these (including `up`) to scope that one command
 to a single cloud. If a name somehow exists in both clouds, the command asks you
 to disambiguate with `--cloud`.
 
-`build-ami` never deletes the previous AMI — each bake adds an AMI + a
-~30 GB EBS snapshot (~$1.50/month each). Use `list-amis` to see them and
-`delete-ami` to clean up; the current AMI (referenced in `./config`) is
-protected.
+`build-ami` never deletes the previous image — each AWS bake adds an AMI + a
+~30 GB EBS snapshot (~$1.50/month each); each GCP bake adds a custom image
+(~$0.05/GB-month). Use `list-images` to see them and `delete-image` to clean
+up; the current image (referenced in `./config`) is protected unless you pass
+`--force`.
 
 ### Sandbox lifecycle
 

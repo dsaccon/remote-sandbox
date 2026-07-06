@@ -120,3 +120,71 @@ mc_terminate() {
         log_info "$prov: terminated ${ids[*]}"
     done
 }
+
+# provider_images_all [SCOPE] — normalized image records across the in-scope
+# clouds (SCOPE = aws|gcp to restrict; empty = all), one tab-separated row per
+# image, prefixed with its provider (7 fields):
+#   provider id name created_epoch size_gb current in_use
+# A cloud whose CLI/credentials aren't usable is skipped silently.
+provider_images_all() {
+    local scope="${1:-}" prov
+    for prov in $_MC_CLOUDS; do
+        [[ -n "$scope" && "$scope" != "$prov" ]] && continue
+        (
+            set +e
+            CLOUD="$prov"
+            provider_load 2>/dev/null || exit 0
+            ( provider_check_creds ) >/dev/null 2>&1 || exit 0
+            provider_list_images 2>/dev/null | while IFS= read -r row; do
+                [ -n "$row" ] && printf '%s\t%s\n' "$prov" "$row"
+            done
+            exit 0
+        )
+    done
+    return 0
+}
+
+# mc_find_image ID_OR_NAME [SCOPE] — the single image record (7 fields) whose id
+# OR name == the query across in-scope clouds. die on no match or on ambiguity
+# (same identifier in >1 cloud). Used by delete-image.
+mc_find_image() {
+    local q="$1" scope="${2:-}" rows match count provs
+    rows="$(provider_images_all "$scope")"
+    match="$(printf '%s\n' "$rows" | awk -F'\t' -v q="$q" '$2==q || $3==q')"
+    if [[ -z "$match" ]]; then
+        die "no image '$q' in ${scope:-aws or gcp} (try ./bin/sandbox list-images)"
+    fi
+    count="$(printf '%s\n' "$match" | grep -c .)"
+    if [[ "$count" -gt 1 ]]; then
+        provs="$(printf '%s\n' "$match" | awk -F'\t' '{print $1}' | tr '\n' ' ')"
+        die "image '$q' exists in more than one cloud (${provs% }) — pick one with --cloud"
+    fi
+    printf '%s' "$match"
+}
+
+# mc_delete_image — read "provider<TAB>id" rows on stdin; delete each image via
+# its cloud's driver (per-provider subshell). Logs a one-line summary per cloud.
+mc_delete_image() {
+    local input; input="$(cat)"
+    [[ -z "$input" ]] && return 0
+    local prov
+    for prov in $_MC_CLOUDS; do
+        local ids=() p i
+        while IFS=$'\t' read -r p i; do
+            [[ "$p" == "$prov" ]] || continue
+            [[ -z "$i" ]] && continue
+            ids+=("$i")
+        done <<< "$input"
+        [[ ${#ids[@]} -eq 0 ]] && continue
+        (
+            set +e
+            CLOUD="$prov"
+            provider_load 2>/dev/null || exit 0
+            local one
+            for one in "${ids[@]}"; do
+                provider_delete_image "$one"
+            done
+            exit 0
+        )
+    done
+}

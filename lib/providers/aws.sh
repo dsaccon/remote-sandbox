@@ -15,6 +15,54 @@ provider_launch()      { provision_launch "$1" "$2" "$3" "$4"; }   # -> instance
 provider_resolve_ip()  { aws_resolve_running_sandbox_ip "$1"; }
 provider_build_image() { _aws_build_image; }
 
+# provider_list_images — normalized image records for the caller's
+# claude-sandbox-* AMIs, newest first, one tab-separated row each (6 fields):
+#   id  name  created_epoch  size_gb  current  in_use
+# current = the AMI_ID in ./config; in_use = current OR an AMI a non-terminated
+# sandbox booted from (so --active never hides an AMI a live box depends on).
+provider_list_images() {
+    local json inst_json current="${AMI_ID:-}" in_use=" ${AMI_ID:-} " ami
+    json="$(aws_describe_self_amis)"
+    inst_json="$(aws_describe_instances_by_tag Project claude-sandbox \
+        'pending,running,stopping,stopped,shutting-down' 2>/dev/null || echo '{}')"
+    while IFS= read -r ami; do
+        [[ -z "$ami" || "$ami" == "null" ]] && continue
+        [[ "$in_use" == *" $ami "* ]] && continue
+        in_use+="$ami "
+    done < <(printf '%s' "$inst_json" | jq -r '.Reservations[]?.Instances[]?.ImageId' 2>/dev/null)
+
+    printf '%s' "$json" | jq -r '
+        .Images | sort_by(.CreationDate) | reverse | .[] |
+        [ .ImageId, (.Name // "-"), .CreationDate,
+          (((.BlockDeviceMappings // []) | map(select(.Ebs) | .Ebs.VolumeSize) | add) // 0)
+        ] | @tsv' \
+    | while IFS=$'\t' read -r id name created size; do
+        local epoch cur used
+        epoch="$(date -u -j -f "%Y-%m-%dT%H:%M:%S" "${created%.*}" "+%s" 2>/dev/null \
+            || date -u -d "$created" "+%s" 2>/dev/null || echo 0)"
+        cur=0; [[ -n "$current" && "$id" == "$current" ]] && cur=1
+        used=0; [[ "$in_use" == *" $id "* ]] && used=1
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$name" "$epoch" "$size" "$cur" "$used"
+    done
+}
+
+# provider_delete_image AMI_ID — deregister an AMI and delete its EBS snapshots.
+# Capture snapshot IDs BEFORE deregister (after, the block-device info is gone).
+provider_delete_image() {
+    local ami="$1" snaps snap
+    snaps="$(aws_image_snapshot_ids "$ami" 2>/dev/null || true)"
+    if [[ -z "$snaps" || "$snaps" == "None" ]]; then
+        log_warn "$ami: no snapshot found (already deleted, or AMI doesn't exist)"
+    fi
+    log_info "deregistering $ami"
+    aws_deregister_image "$ami"
+    for snap in $snaps; do
+        [[ -z "$snap" || "$snap" == "None" ]] && continue
+        log_info "deleting snapshot $snap"
+        aws_delete_snapshot "$snap"
+    done
+}
+
 # _aws_build_image — bake a fresh AMI (formerly bin/sandbox-build-ami's body,
 # moved here verbatim in Task 6; AWS-specific end to end). Relies on
 # REPO_ROOT, config_load's exports, and helpers from aws.sh/provision.sh/
