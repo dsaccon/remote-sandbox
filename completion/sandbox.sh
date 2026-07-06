@@ -34,30 +34,70 @@ _sandbox_cfg() {
 # Seconds to reuse the completion name cache. The first Tab queries the clouds;
 # repeat Tabs within this window return instantly. Short so a box you just
 # up'd/down'd shows up again quickly.
-_SANDBOX_NAMES_TTL=5
+_SANDBOX_CACHE_TTL=5
 
 # _sandbox_mtime FILE — file mtime as a unix epoch (macOS then GNU stat).
 _sandbox_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
 
-# _sandbox_list_names — sandbox names across BOTH clouds (ssh/scp/down are
-# cross-cloud, so completion offers everything reachable), cached for a few
-# seconds so repeated Tab presses don't re-hit the cloud APIs each time.
-_sandbox_list_names() {
-    local key cache now m
+# Lightweight completion loader. While a COLD lookup queries the clouds (a few
+# seconds), animate "searching aws + gcp ." → ".." → "..." on the input line;
+# readline/zle redraws the line when completion returns, so the overwrite is
+# transient. A warm cache returns instantly and never spins. Set
+# SANDBOX_COMPLETION_SPINNER=0 to disable if your terminal dislikes the redraw.
+_sandbox_spin_pid=""
+_sandbox_spin_start() {
+    [[ "${SANDBOX_COMPLETION_SPINNER:-1}" == 0 ]] && return 0
+    # Probe REAL writability: `-w /dev/tty` passes on macOS even with no
+    # controlling terminal, and the write then fails with "Device not
+    # configured". Opening it via a group with 2>/dev/null swallows that.
+    { true > /dev/tty; } 2>/dev/null || return 0
+    {
+        # Self-cap (~10s) so a hung query can never leave the spinner running.
+        i=0
+        while [ "$i" -lt 33 ]; do
+            for d in '.' '..' '...'; do
+                # 2>/dev/null BEFORE >/dev/tty so a failed redirection stays quiet.
+                printf '\r\033[K\033[2msearching aws + gcp %s\033[0m' "$d" 2>/dev/null > /dev/tty
+                sleep 0.3
+                i=$((i + 1))
+            done
+        done
+    } &
+    _sandbox_spin_pid=$!
+    # disown so killing it later prints no job-control "Terminated" notice.
+    disown 2>/dev/null || true
+}
+_sandbox_spin_stop() {
+    [[ -n "$_sandbox_spin_pid" ]] || return 0
+    kill "$_sandbox_spin_pid" 2>/dev/null || true
+    printf '\r\033[K' 2>/dev/null > /dev/tty    # erase spinner; readline redraws the line
+    _sandbox_spin_pid=""
+}
+
+# _sandbox_cached TAG FRESH_FN — print FRESH_FN's output, cached per config for
+# a few seconds so repeated Tab presses don't re-hit the cloud APIs. Cold/stale
+# → run FRESH_FN (slow) behind the spinner; warm → just cat the file (instant,
+# no spinner). Atomic rename so a concurrent Tab never reads a half-written file.
+_sandbox_cached() {
+    local tag="$1" fresh="$2" key cache now m
     key="$(printf '%s' "${_sandbox_config:-}" | cksum | cut -d' ' -f1)"
-    cache="${TMPDIR:-/tmp}/sandbox-names-$(id -u)-${key}"
+    cache="${TMPDIR:-/tmp}/sandbox-${tag}-$(id -u)-${key}"
     now="$(date +%s)"; m="$(_sandbox_mtime "$cache")"
-    if [[ -z "$m" ]] || (( now - m >= _SANDBOX_NAMES_TTL )); then
-        # Refresh via a temp file + atomic rename so a concurrent Tab never
-        # reads a half-written cache.
-        if _sandbox_list_names_fresh > "$cache.$$" 2>/dev/null; then
+    if [[ -z "$m" ]] || (( now - m >= _SANDBOX_CACHE_TTL )); then
+        _sandbox_spin_start
+        if "$fresh" > "$cache.$$" 2>/dev/null; then
             mv -f "$cache.$$" "$cache" 2>/dev/null || rm -f "$cache.$$" 2>/dev/null
         else
             rm -f "$cache.$$" 2>/dev/null
         fi
+        _sandbox_spin_stop
     fi
     cat "$cache" 2>/dev/null
 }
+
+# _sandbox_list_names — sandbox names across BOTH clouds (ssh/scp/down are
+# cross-cloud, so completion offers everything reachable), cached.
+_sandbox_list_names() { _sandbox_cached names _sandbox_list_names_fresh; }
 
 # _sandbox_list_names_fresh — query both clouds CONCURRENTLY. Process
 # substitution starts both at once and merges them (parallel in bash AND zsh,
@@ -84,10 +124,11 @@ _sandbox_names_gcp() {
         --filter="labels.project=claude-sandbox" --format="value(name)" 2>/dev/null
 }
 
-_sandbox_list_images() {
-    # Identifiers you can pass to delete-image, across BOTH clouds: AWS AMI ids
-    # + GCP image names. Both queried in parallel; silent failure → empty (same
-    # UX as _sandbox_list_names).
+# _sandbox_list_images — delete-image identifiers across BOTH clouds (AWS AMI
+# ids + GCP image names), cached like the names lookup so `delete-image <Tab>`
+# only pays the cloud round-trip on the first press.
+_sandbox_list_images() { _sandbox_cached images _sandbox_list_images_fresh; }
+_sandbox_list_images_fresh() {
     sort -u <(_sandbox_images_aws 2>/dev/null) <(_sandbox_images_gcp 2>/dev/null)
 }
 _sandbox_images_aws() {
