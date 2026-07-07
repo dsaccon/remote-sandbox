@@ -169,6 +169,7 @@ for details on any subcommand.
 ./bin/sandbox up --no-spot             # avoid spot for this launch (overrides USE_SPOT)
 ./bin/sandbox up --spot                # force spot for this launch (overrides USE_SPOT)
 ./bin/sandbox up --instance-type t3.large
+./bin/sandbox up --disk-size 128       # root disk in GB (default 64; both clouds)
 ./bin/sandbox up --name myproject      # custom name
 ./bin/sandbox up --ssh-cidr 1.2.3.4/32 # override the SSH ingress CIDR for this sandbox
 ./bin/sandbox up --ssh-cidr 0.0.0.0/0  # ...or leave SSH open to the world

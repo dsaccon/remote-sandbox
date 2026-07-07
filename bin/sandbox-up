@@ -14,7 +14,7 @@ source "$REPO_ROOT/lib/provider.sh"
 usage() {
     cat <<'EOF'
 Usage: sandbox up [--cloud aws|gcp] [--repo URL] [--name N] [--instance-type T]
-                  [--spot|--no-spot] [--ssh-cidr CIDR]
+                  [--disk-size GB] [--spot|--no-spot] [--ssh-cidr CIDR]
 
 Provision one ephemeral sandbox VM and print the SSH command to reach it.
 
@@ -24,6 +24,7 @@ Flags:
   --repo URL          Clone this git URL onto the box during cloud-init.
   --name N            Use N as the sandbox name (default: random hex).
   --instance-type T   Override INSTANCE_TYPE from config (e.g. t3.large).
+  --disk-size GB      Root disk size in GB, overriding DISK_SIZE_GB (default 64).
   --spot              Force a spot instance for this launch, overriding the
                       USE_SPOT config default. Cheaper, but AWS can reclaim
                       (terminate) the box at any time.
@@ -52,6 +53,9 @@ while [[ $# -gt 0 ]]; do
             case "${2:-}" in aws|gcp) ;; *) die "unknown --cloud '${2:-}' (supported: aws, gcp)" ;; esac
             CLOUD_FLAG="$2"; shift 2 ;;
         --instance-type)  config_set_from_flag INSTANCE_TYPE "$2"; shift 2 ;;
+        --disk-size)
+            [[ "${2:-}" =~ ^[1-9][0-9]*$ ]] || die "--disk-size needs a positive integer (GB), got '${2:-}'"
+            config_set_from_flag DISK_SIZE_GB "$2"; shift 2 ;;
         --spot)
             [[ "$SPOT_OVERRIDE" == "false" ]] && die "conflicting --spot/--no-spot"
             SPOT_OVERRIDE="true"; shift ;;

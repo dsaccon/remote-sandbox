@@ -108,6 +108,16 @@ aws_describe_sgs_by_ids() {
     _aws ec2 describe-security-groups --group-ids "$@" --output json
 }
 
+# aws_describe_volumes ID [ID ...] — batch fetch EBS volumes by ID, return JSON
+# ({"Volumes":[{"VolumeId":..,"Size":..},...]}). Used by `list` for disk size.
+aws_describe_volumes() {
+    if [[ $# -eq 0 ]]; then
+        printf '%s' '{"Volumes":[]}'
+        return 0
+    fi
+    _aws ec2 describe-volumes --volume-ids "$@" --output json
+}
+
 aws_set_sg_ingress_to() {
     local sg_id="$1"
     local cidr="$2"

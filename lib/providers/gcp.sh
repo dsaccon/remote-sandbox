@@ -222,6 +222,7 @@ provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
 
     local args=(compute instances create "$name" --zone="$zone"
         --machine-type="${GCP_MACHINE_TYPE}"
+        --boot-disk-size="${DISK_SIZE_GB:-64}GB"
         --tags="$name"
         --labels="project=claude-sandbox,name=$name"
         --metadata="owner=$owner,auto-shutdown-hours=$hours"
@@ -278,7 +279,7 @@ provider_list() {
         --filter="labels.project=claude-sandbox" --zones="$GCP_ZONE" --format=json 2>/dev/null || echo '[]')"
     fw="$(_gcloud compute firewall-rules list \
         --filter="name~-fw$" --format=json 2>/dev/null || echo '[]')"
-    # jq emits: name rawstatus machinetype market rawts ip ash allowed
+    # jq emits: name rawstatus machinetype market rawts ip ash allowed disk
     printf '%s' "$inst" | jq -r --argjson fw "$fw" '
         ($fw | map({(.targetTags[0] // ""): (.sourceRanges[0] // "-")}) | add // {}) as $cidr |
         .[] | [
@@ -289,12 +290,13 @@ provider_list() {
             .creationTimestamp,
             (.networkInterfaces[0].accessConfigs[0].natIP // "-"),
             ((.metadata.items // [] | map(select(.key=="auto-shutdown-hours")) | .[0].value) // "-"),
-            ($cidr[.name] // "-")
+            ($cidr[.name] // "-"),
+            (.disks[0].diskSizeGb // "-")
         ] | @tsv
-    ' | while IFS=$'\t' read -r name rawstatus mtype market rawts ip ash cidr; do
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    ' | while IFS=$'\t' read -r name rawstatus mtype market rawts ip ash cidr disk; do
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$name" "$name" "$(gcp_map_state "$rawstatus")" "$mtype" "$market" \
-            "$(gcp_ts_to_epoch "$rawts")" "$ip" "$cidr" "$ash"
+            "$(gcp_ts_to_epoch "$rawts")" "$ip" "$cidr" "$ash" "$disk"
     done
 }
 

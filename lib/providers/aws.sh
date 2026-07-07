@@ -253,13 +253,35 @@ provider_list() {
         sg_json='{"SecurityGroups":[]}'
     fi
 
+    # Root-volume sizes: describe-instances carries only volume IDs, so batch
+    # every instance's root volume ID into one describe-volumes call for size.
+    local vol_ids=()
+    while IFS= read -r vid; do
+        [[ -z "$vid" || "$vid" == "null" ]] && continue
+        vol_ids+=("$vid")
+    done < <(printf '%s' "$json" | jq -r '
+        .Reservations[].Instances[]
+        | (.RootDeviceName) as $rdn
+        | [.BlockDeviceMappings[]? | select(.DeviceName==$rdn) | .Ebs.VolumeId] | .[0] // empty')
+
+    # Default to empty (→ disk "-") so a describe-volumes failure (e.g. no
+    # ec2:DescribeVolumes permission) degrades gracefully instead of breaking
+    # the whole listing via an invalid --argjson.
+    local vol_json='{"Volumes":[]}' _vj
+    if [[ ${#vol_ids[@]} -gt 0 ]]; then
+        if _vj="$(aws_describe_volumes "${vol_ids[@]}" 2>/dev/null)" && [[ -n "$_vj" ]]; then
+            vol_json="$_vj"
+        fi
+    fi
+
     local now_epoch; now_epoch="$(date -u +%s)"
     # Join instance data with status data + SG ingress in jq. allowed_cidr
     # shows the first :22 CIDR found across the instance's SGs; "-" if none
     # configured.
-    printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg_json" '
+    printf '%s' "$json" | jq -r --argjson statuses "$status_json" --argjson sgs "$sg_json" --argjson vols "$vol_json" '
         ($statuses.InstanceStatuses // [] | INDEX(.InstanceId)) as $sm |
         ($sgs.SecurityGroups // [] | INDEX(.GroupId)) as $sgm |
+        ($vols.Volumes // [] | INDEX(.VolumeId)) as $vm |
         .Reservations[].Instances[] |
         [
             .InstanceId,
@@ -276,9 +298,14 @@ provider_list() {
                 | (.IpPermissions[]? | select(.IpProtocol=="tcp" and .FromPort==22) | .IpRanges[]?.CidrIp)
             ] | .[0] // "-"),
             ((.Tags // []) | map(select(.Key=="AutoShutdownHours")) | .[0].Value // "-"),
-            (if .InstanceLifecycle=="spot" then "spot" else "on-demand" end)
+            (if .InstanceLifecycle=="spot" then "spot" else "on-demand" end),
+            (
+                (.RootDeviceName) as $rdn
+                | ([.BlockDeviceMappings[]? | select(.DeviceName==$rdn) | .Ebs.VolumeId] | .[0]) as $rvid
+                | ($vm[($rvid // "")].Size // "-")
+            )
         ] | @tsv
-    ' | while IFS=$'\t' read -r handle name state type launch ip inst_status sys_status cidr shutdown_hours market; do
+    ' | while IFS=$'\t' read -r handle name state type launch ip inst_status sys_status cidr shutdown_hours market disk; do
         # `read -r` with IFS=$'\t' treats runs of tabs as one separator (tab is
         # an IFS-whitespace char), so when both status fields are empty the
         # cidr column gets eaten. jq emits "-" placeholders to keep field
@@ -290,7 +317,7 @@ provider_list() {
             || date -u -d "$launch" "+%s" 2>/dev/null || echo "$now_epoch")"
         local display_state
         display_state="$(compute_display_state "$state" "$inst_status" "$sys_status")"
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$handle" "$name" "$display_state" "$type" "$market" "$launch_epoch" "$ip" "$cidr" "$shutdown_hours"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$handle" "$name" "$display_state" "$type" "$market" "$launch_epoch" "$ip" "$cidr" "$shutdown_hours" "$disk"
     done
 }

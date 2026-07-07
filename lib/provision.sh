@@ -63,7 +63,7 @@ build_run_instances_json() {
   "SecurityGroupIds": ["$sg_id"],
   "InstanceInitiatedShutdownBehavior": "terminate",
   "BlockDeviceMappings": [
-    {"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":30,"VolumeType":"gp3","DeleteOnTermination":true}}
+    {"DeviceName":"/dev/sda1","Ebs":{"VolumeSize":${DISK_SIZE_GB:-64},"VolumeType":"gp3","DeleteOnTermination":true}}
   ],
   "UserData": "$user_data_b64",
   "TagSpecifications": [

@@ -270,3 +270,21 @@ EOF
     [[ "$output" == *"failed"* ]]
     [[ "$output" != *"launching"* ]]
 }
+
+@test "up --disk-size rejects a non-integer value (before any AWS call)" {
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-up" --disk-size abc
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"positive integer"* ]]
+    [ ! -s "$AWS_STUB_LOG" ]
+}
+
+@test "build_run_instances_json sizes the root volume from DISK_SIZE_GB" {
+    source "$SANDBOX_REPO_ROOT/lib/log.sh"
+    source "$SANDBOX_REPO_ROOT/lib/provision.sh"
+    export AMI_ID=ami-abc INSTANCE_TYPE=t3 SSH_KEY_NAME=k AUTO_SHUTDOWN_HOURS=0
+    DISK_SIZE_GB=100 run build_run_instances_json box false sg-1 ""
+    [[ "$output" == *'"VolumeSize":100'* ]]
+    # empty → falls back to the 64 GB default
+    DISK_SIZE_GB="" run build_run_instances_json box false sg-1 ""
+    [[ "$output" == *'"VolumeSize":64'* ]]
+}

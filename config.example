@@ -16,6 +16,7 @@ GCP_SSH_PUBKEY=""                 # SSH *public* key injected at launch;
 
 # ---- Instance ----
 INSTANCE_TYPE="m7i-flex.xlarge"   # 16 GB / 4 vCPU recommended
+DISK_SIZE_GB="64"                 # root disk size (GB), both clouds; `up --disk-size` overrides
 # Spot is cheaper but AWS can reclaim (terminate) the instance at any time —
 # a box left idle overnight can vanish. Toggle the standing default with
 # `./bin/sandbox spot on|off`, or override per launch with `up --spot` /

@@ -18,7 +18,7 @@ Usage: sandbox list [--active] [--cloud aws|gcp]
 
 List every sandbox (Project=claude-sandbox) across ALL configured clouds — both
 AWS and GCP — regardless of the config CLOUD. Columns: PROVIDER, NAME, STATE,
-TYPE, MARKET, AGE, EXPIRES, IP, ALLOWED.
+TYPE, DISK, MARKET, AGE, EXPIRES, IP, ALLOWED.
 
   PROVIDER "aws" or "gcp" — which cloud the box lives in. A cloud whose
            credentials aren't configured is skipped silently.
@@ -53,11 +53,11 @@ fi
 
 # Header — PROVIDER column prepended; STATE widened to 14 to fit
 # "initializing" / "shutting-down".
-printf '%-9s %-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' \
-    PROVIDER NAME STATE TYPE MARKET AGE EXPIRES IP ALLOWED
+printf '%-9s %-22s %-14s %-18s %-6s %-10s %-10s %-8s %-16s %-18s\n' \
+    PROVIDER NAME STATE TYPE DISK MARKET AGE EXPIRES IP ALLOWED
 
 now_epoch="$(date -u +%s)"
-printf '%s\n' "$rows" | while IFS=$'\t' read -r provider handle name state type market launch_epoch ip cidr shutdown_hours; do
+printf '%s\n' "$rows" | while IFS=$'\t' read -r provider handle name state type market launch_epoch ip cidr shutdown_hours disk; do
     age_sec=$(( now_epoch - launch_epoch ))
     if (( age_sec < 3600 )); then
         age="$(( age_sec / 60 ))m"
@@ -84,6 +84,7 @@ printf '%s\n' "$rows" | while IFS=$'\t' read -r provider handle name state type 
             fi
             ;;
     esac
-    printf '%-9s %-22s %-14s %-18s %-10s %-10s %-8s %-16s %-18s\n' \
-        "$provider" "$name" "$state" "$type" "$market" "$age" "$expires" "$ip" "$cidr"
+    case "$disk" in ""|"-"|"None") disk_disp="-" ;; *) disk_disp="${disk}G" ;; esac
+    printf '%-9s %-22s %-14s %-18s %-6s %-10s %-10s %-8s %-16s %-18s\n' \
+        "$provider" "$name" "$state" "$type" "$disk_disp" "$market" "$age" "$expires" "$ip" "$cidr"
 done

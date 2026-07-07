@@ -100,6 +100,34 @@ EOF
     [[ "$output" == *"9.9.9.9"* ]]
 }
 
+@test "list shows a DISK column with each box's root disk size" {
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+AWS_REGION="us-west-2"
+GCP_PROJECT="proj"
+GCP_ZONE="us-west1-b"
+EOF
+    # Hybrid AWS response: describe-instances/-status/-security-groups/-volumes
+    # each read their own key from the one stub reply.
+    cat > "$AWS_STUB_RESPONSE" <<'EOF'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-a","InstanceType":"m7i-flex.xlarge","State":{"Name":"running"},
+   "LaunchTime":"2026-07-05T00:00:00Z","RootDeviceName":"/dev/sda1",
+   "BlockDeviceMappings":[{"DeviceName":"/dev/sda1","Ebs":{"VolumeId":"vol-1"}}],
+   "Tags":[{"Key":"Name","Value":"sandbox-aws"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}],"InstanceStatuses":[],"SecurityGroups":[],"Volumes":[{"VolumeId":"vol-1","Size":64}]}
+EOF
+    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+0
+[{"name":"sandbox-gcp","status":"RUNNING","machineType":"z/e2-standard-4","creationTimestamp":"2026-07-05T00:00:00.000-07:00","scheduling":{"provisioningModel":"STANDARD"},"networkInterfaces":[{"accessConfigs":[{"natIP":"9.9.9.9"}]}],"metadata":{"items":[]},"tags":{"items":["sandbox-gcp"]},"disks":[{"diskSizeGb":"128"}]}]
+EOF
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"DISK"* ]]
+    echo "$output" | grep sandbox-aws | grep -q -w 64G
+    echo "$output" | grep sandbox-gcp | grep -q -w 128G
+}
+
 @test "list skips gcp silently when GCP_PROJECT is unset (no error, no gcp row)" {
     cat > "$AWS_STUB_RESPONSE" <<'EOF'
 0

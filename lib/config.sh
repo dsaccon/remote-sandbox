@@ -20,6 +20,7 @@ _CONFIG_KEYS=(
     GCP_SSH_PUBKEY
     AWS_REGION
     INSTANCE_TYPE
+    DISK_SIZE_GB
     USE_SPOT
     SPOT_FALLBACK_ON_DEMAND
     SSH_KEY_NAME
@@ -44,6 +45,7 @@ _config_default() {
         GCP_SSH_PUBKEY)           echo "" ;;
         AWS_REGION)               echo "us-west-2" ;;
         INSTANCE_TYPE)            echo "m7i-flex.xlarge" ;;
+        DISK_SIZE_GB)             echo "64" ;;
         USE_SPOT)                 echo "true" ;;
         SPOT_FALLBACK_ON_DEMAND)  echo "true" ;;
         SSH_KEY_NAME)             echo "claude-sandbox" ;;

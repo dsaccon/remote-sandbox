@@ -73,9 +73,9 @@ mc_find() {
 # mc_resolve_ip NAME [SCOPE] — resolve a running box NAME to its public IP across
 # clouds, with the same state-aware errors ssh/scp had per-cloud.
 mc_resolve_ip() {
-    local match provider handle name state type market epoch ip cidr ash
+    local match provider handle name state type market epoch ip cidr ash disk
     match="$(mc_find "$1" "${2:-}")" || return 1
-    IFS=$'\t' read -r provider handle name state type market epoch ip cidr ash <<< "$match"
+    IFS=$'\t' read -r provider handle name state type market epoch ip cidr ash disk <<< "$match"
     # Refuse only states that clearly aren't reachable; a box that's up (ready /
     # running / still-initializing / impaired) is connectable as long as it has
     # a public IP — matching the old per-cloud resolve, which keyed off "running".

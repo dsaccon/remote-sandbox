@@ -167,8 +167,16 @@ else
 
         case "$subcmd" in
             up)
-                # shellcheck disable=SC2207
-                COMPREPLY=( $(compgen -W "--cloud --repo --name --instance-type --spot --no-spot --ssh-cidr --help" -- "$cur") )
+                if [[ "$prev" == "--cloud" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                elif [[ "$prev" == "--disk-size" ]]; then
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "32 64 100 200 500" -- "$cur") )
+                else
+                    # shellcheck disable=SC2207
+                    COMPREPLY=( $(compgen -W "--cloud --repo --name --instance-type --disk-size --spot --no-spot --ssh-cidr --help" -- "$cur") )
+                fi
                 ;;
 
             down)

@@ -62,6 +62,13 @@ _sandbox() {
         return
     fi
 
+    # --disk-size <TAB> → a few common sizes (freeform GB otherwise).
+    if [[ $words[CURRENT-1] == --disk-size ]]; then
+        local -a sizes; sizes=(32 64 100 200 500)
+        _describe -t sizes 'disk GB' sizes
+        return
+    fi
+
     case $cmd in
         up)
             local -a opts
@@ -70,6 +77,7 @@ _sandbox() {
                 '--repo:clone a git repo into the box'
                 '--name:sandbox name'
                 '--instance-type:EC2 instance type'
+                '--disk-size:root disk size in GB (default 64)'
                 '--spot:force spot for this launch'
                 '--no-spot:force on-demand for this launch'
                 '--ssh-cidr:SSH ingress CIDR'
