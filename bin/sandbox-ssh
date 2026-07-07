@@ -15,13 +15,18 @@ source "$REPO_ROOT/lib/multicloud.sh"
 
 usage() {
     cat <<'EOF'
-Usage: sandbox ssh <name> [--cloud aws|gcp]
+Usage: sandbox ssh <name> [--cloud aws|gcp] [--ports P [P ...]]
 
 Resolve <name> to its running sandbox's public IP — searching BOTH clouds
 (aws + gcp), so you don't need to set CLOUD — and exec ssh into it as
 $SSH_USER. --cloud narrows the search to one cloud (e.g. to disambiguate a
 name present in both). The SSH key file (-i $SSH_KEY_FILE) and
 IdentitiesOnly=yes are passed automatically when the file is readable.
+
+  --ports P [P ...]  Forward each local port P to the same port on the box
+                     (ssh -L P:localhost:P), e.g. `--ports 16006 18000 13100`.
+                     Ports are collected until the next flag or end of args.
+                     Using --ports forces a plain ssh session (not cmux).
 
 If cmux is installed and its app is running, the session opens as a cmux ssh
 workspace. Set SSH_USE_CMUX=false in ./config to always use plain ssh.
@@ -30,13 +35,28 @@ EOF
 
 name=""
 scope=""
+ports=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help) usage; exit 0 ;;
         --cloud)   [[ $# -ge 2 ]] || die "--cloud needs a value (aws|gcp)"
                    scope="$2"; mc_valid_cloud "$scope"; shift 2 ;;
+        --ports)
+            shift
+            # Variadic: consume following numeric (optionally comma-joined)
+            # tokens as ports, stopping at the next flag / name / end.
+            while [[ $# -gt 0 && "$1" =~ ^[0-9]+(,[0-9]+)*$ ]]; do
+                IFS=',' read -ra _plist <<< "$1"
+                for _p in "${_plist[@]}"; do
+                    (( _p >= 1 && _p <= 65535 )) || die "invalid --ports value: $_p (ports must be 1-65535)"
+                    ports+=("$_p")
+                done
+                shift
+            done
+            [[ ${#ports[@]} -gt 0 ]] || die "--ports needs at least one port (e.g. --ports 16006 18000)"
+            ;;
         -*)        die "unknown flag: $1 (try 'sandbox ssh --help')" ;;
-        *)         [[ -n "$name" ]] && die "Usage: sandbox ssh <name> [--cloud aws|gcp]"
+        *)         [[ -n "$name" ]] && die "Usage: sandbox ssh <name> [--cloud aws|gcp] [--ports P ...]"
                    name="$1"; shift ;;
     esac
 done
@@ -52,8 +72,10 @@ ip="$(mc_resolve_ip "$name" "$scope")" || exit 1
 # installed and its app is reachable. SSH_USE_CMUX=false (./config or
 # SANDBOX_SSH_USE_CMUX) disables this outright; an explicit SSH_CMD (env
 # var, or a test stub) also always wins over auto-detection.
+# Port forwarding is a plain-ssh workflow (`ssh -L …`); cmux workspaces don't
+# take -L, so --ports forces plain ssh.
 use_cmux=0
-if [[ "${SSH_USE_CMUX:-true}" == "true" ]] && [[ -z "${SSH_CMD:-}" ]] \
+if (( ${#ports[@]} == 0 )) && [[ "${SSH_USE_CMUX:-true}" == "true" ]] && [[ -z "${SSH_CMD:-}" ]] \
         && command -v "$CMUX_CMD" >/dev/null 2>&1 && "$CMUX_CMD" ping >/dev/null 2>&1; then
     SSH_CMD="$CMUX_CMD"
     use_cmux=1
@@ -75,6 +97,15 @@ fi
 
 if [[ -n "${SSH_KEY_FILE:-}" && -r "$SSH_KEY_FILE" ]]; then
     ssh_args+=(-i "$SSH_KEY_FILE" -o IdentitiesOnly=yes)
+fi
+# -L <p>:localhost:<p> for each --ports value. Guard the expansion: iterating
+# "${ports[@]}" on an empty array is an "unbound variable" error under `set -u`
+# on bash 3.2 (the laptop default).
+if (( ${#ports[@]} > 0 )); then
+    for _p in "${ports[@]}"; do
+        ssh_args+=(-L "${_p}:localhost:${_p}")
+    done
+    log_info "forwarding local ports to the box: ${ports[*]}"
 fi
 # Fold the destination into the array so the expansion below is never empty —
 # "${arr[@]}" on an empty array is an "unbound variable" error under `set -u`

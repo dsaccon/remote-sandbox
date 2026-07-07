@@ -57,6 +57,35 @@ EOF
     [[ "$output" == *"SSH_CMD: ubuntu@9.9.9.9"* ]]
 }
 
+@test "ssh --ports forwards each port with -L" {
+    cat > "$AWS_STUB_RESPONSE" <<'EOF'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-aaa","PublicIpAddress":"5.6.7.8","State":{"Name":"running"},
+   "Tags":[{"Key":"Name","Value":"sandbox-x"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-ssh" sandbox-x --ports 16006 18000 13100
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"-L 16006:localhost:16006"* ]]
+    [[ "$output" == *"-L 18000:localhost:18000"* ]]
+    [[ "$output" == *"-L 13100:localhost:13100"* ]]
+    [[ "$output" == *"SSH_CMD: "*"ubuntu@5.6.7.8"* ]]
+}
+
+@test "ssh --ports rejects an out-of-range port before connecting" {
+    cat > "$AWS_STUB_RESPONSE" <<'EOF'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-aaa","PublicIpAddress":"5.6.7.8","State":{"Name":"running"},
+   "Tags":[{"Key":"Name","Value":"sandbox-x"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-ssh" sandbox-x --ports 70000
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"1-65535"* ]]
+}
+
 @test "ssh unknown name exits non-zero" {
     cat > "$AWS_STUB_RESPONSE" <<'EOF'
 0

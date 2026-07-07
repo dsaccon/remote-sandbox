@@ -32,7 +32,9 @@ Commands:
                  Show or set the standing spot default (USE_SPOT). `up` uses
                  it unless you pass --spot/--no-spot. Spot is cheaper but AWS
                  can reclaim (terminate) the box at any time.
-  ssh <name>     SSH into a named sandbox.
+  ssh <name> [--ports P [P ...]]
+                 SSH into a named sandbox. --ports forwards each local port to
+                 the box (ssh -L P:localhost:P).
   scp <name> <src-path> [dest-path]
                  Upload a local file or directory to a sandbox (dir → scp -r).
                  With no dest-path, navigate the remote filesystem

@@ -200,14 +200,16 @@ else
                 if [[ "$prev" == "--cloud" ]]; then
                     # shellcheck disable=SC2207
                     COMPREPLY=( $(compgen -W "aws gcp" -- "$cur") )
+                elif [[ "$prev" == "--ports" ]]; then
+                    COMPREPLY=()   # freeform port numbers
                 elif [[ "$cur" == -* ]]; then
                     # shellcheck disable=SC2207
-                    COMPREPLY=( $(compgen -W "--cloud --help" -- "$cur") )
+                    COMPREPLY=( $(compgen -W "--cloud --ports --help" -- "$cur") )
                 else
                     local names
                     names="$(_sandbox_list_names)"
                     # shellcheck disable=SC2207
-                    COMPREPLY=( $(compgen -W "$names --cloud --help" -- "$cur") )
+                    COMPREPLY=( $(compgen -W "$names --cloud --ports --help" -- "$cur") )
                 fi
                 ;;
 

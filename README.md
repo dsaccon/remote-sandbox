@@ -232,6 +232,8 @@ for details on any subcommand.
 ./bin/sandbox ssh <name>               # SSH into a box
 #   ...opens as a cmux ssh workspace instead if cmux is installed and running
 #   (set SSH_USE_CMUX=false in ./config to always use plain ssh)
+./bin/sandbox ssh <name> --ports 16006 18000   # forward local ports to the box
+#   (ssh -L 16006:localhost:16006 -L 18000:localhost:18000 …; forces plain ssh)
 
 ./bin/sandbox scp <name> <src> <dest>  # upload a file/dir to a box
 ./bin/sandbox scp <name> <src>         #   ...omit dest to pick it with the arrow keys

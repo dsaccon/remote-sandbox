@@ -105,9 +105,13 @@ _sandbox() {
             ;;
 
         ssh)
-            # ssh takes a single <name>, optionally with --cloud.
+            # ssh takes a single <name>, optionally with --cloud / --ports.
             _sandbox_names
-            local -a opts; opts=('--cloud:restrict to one cloud (aws|gcp)' '--help:show help')
+            local -a opts; opts=(
+                '--cloud:restrict to one cloud (aws|gcp)'
+                '--ports:forward local ports (P [P ...])'
+                '--help:show help'
+            )
             _describe -t options 'option' opts
             ;;
 
