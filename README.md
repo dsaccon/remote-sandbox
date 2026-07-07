@@ -45,6 +45,58 @@ should run with minimal local trust.
   chmod 600 ~/.ssh/claude-sandbox.pem
   ```
 
+### AWS IAM permissions
+
+The IAM user whose keys go in `.env` needs the EC2 actions below. This is the
+full set the CLI calls across `up` / `list` / `ssh` / `down` / `build-ami` /
+`list-images` / `delete-image`. Attach it as an inline policy on that user:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RemoteSandbox",
+      "Effect": "Allow",
+      "Action": [
+        "sts:GetCallerIdentity",
+        "ec2:DescribeInstances",
+        "ec2:DescribeInstanceStatus",
+        "ec2:DescribeImages",
+        "ec2:DescribeKeyPairs",
+        "ec2:DescribeSecurityGroups",
+        "ec2:DescribeVolumes",
+        "ec2:DescribeVpcs",
+        "ec2:GetConsoleOutput",
+        "ec2:RunInstances",
+        "ec2:TerminateInstances",
+        "ec2:CreateTags",
+        "ec2:CreateSecurityGroup",
+        "ec2:DeleteSecurityGroup",
+        "ec2:AuthorizeSecurityGroupIngress",
+        "ec2:RevokeSecurityGroupIngress",
+        "ec2:CreateImage",
+        "ec2:DeregisterImage",
+        "ec2:DeleteSnapshot"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
+```
+
+`Resource: "*"` because most calls are account-wide describe/list operations;
+resource-level scoping of `RunInstances` + tagging is fiddly and not worth it
+for a personal tool. Trim to taste:
+
+- Drop `ec2:CreateImage` / `DeregisterImage` / `DeleteSnapshot` if you never
+  `build-ami` / `delete-image`.
+- Drop `ec2:DescribeVolumes` and `list` just shows `-` in the DISK column
+  (it degrades gracefully rather than erroring).
+
+Editing IAM requires an **admin** identity — the sandbox user itself is
+deliberately not allowed to change its own permissions.
+
 ## Setup
 
 One-time, in this order:
