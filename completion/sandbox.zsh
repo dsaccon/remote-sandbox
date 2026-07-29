@@ -105,13 +105,32 @@ _sandbox() {
             ;;
 
         ssh)
-            # ssh takes a single <name>, optionally with --cloud / --ports.
-            _sandbox_names
+            # ssh <name> [--cloud aws|gcp] [--ports P [P ...]] — a SINGLE <name>
+            # positional. Offer names only until it's filled; otherwise a
+            # completed name gets re-suggested on every further Tab (and with a
+            # lone sandbox, keeps re-inserting: `ssh box box box …`).
             local -a opts; opts=(
                 '--cloud:restrict to one cloud (aws|gcp)'
                 '--ports:forward local ports (P [P ...])'
                 '--help:show help'
             )
+            # Count the <name> positionals already on the line (words 3..CURRENT-1),
+            # skipping flags and their values: --cloud's single value and --ports'
+            # run of numeric (optionally comma-joined) port tokens.
+            local i filled=0
+            for (( i = 3; i < CURRENT; i++ )); do
+                case $words[i] in
+                    --cloud) (( i++ )) ;;
+                    --ports)
+                        while (( i < CURRENT - 1 )) && \
+                              [[ $words[i+1] =~ '^[0-9]+(,[0-9]+)*$' ]]; do
+                            (( i++ ))
+                        done ;;
+                    -*) ;;
+                    *) (( filled++ )) ;;
+                esac
+            done
+            (( filled == 0 )) && [[ $words[CURRENT] != -* ]] && _sandbox_names
             _describe -t options 'option' opts
             ;;
 

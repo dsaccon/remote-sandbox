@@ -206,10 +206,32 @@ else
                     # shellcheck disable=SC2207
                     COMPREPLY=( $(compgen -W "--cloud --ports --help" -- "$cur") )
                 else
-                    local names
-                    names="$(_sandbox_list_names)"
-                    # shellcheck disable=SC2207
-                    COMPREPLY=( $(compgen -W "$names --cloud --ports --help" -- "$cur") )
+                    # ssh takes a SINGLE <name> positional; offer names only
+                    # until it's filled, else a completed name is re-suggested
+                    # on every further Tab (a lone sandbox keeps re-inserting:
+                    # `ssh box box box …`). Count filled positionals in
+                    # words[2..CWORD-1], skipping flags and their values
+                    # (--cloud's one value, --ports' numeric run).
+                    local i filled=0 names
+                    for (( i=2; i < COMP_CWORD; i++ )); do
+                        case "${COMP_WORDS[i]}" in
+                            --cloud) (( i++ )) ;;
+                            --ports)
+                                while (( i+1 < COMP_CWORD )) && [[ "${COMP_WORDS[i+1]}" =~ ^[0-9]+(,[0-9]+)*$ ]]; do
+                                    (( i++ ))
+                                done ;;
+                            -*) ;;
+                            *) (( filled++ )) ;;
+                        esac
+                    done
+                    if (( filled == 0 )); then
+                        names="$(_sandbox_list_names)"
+                        # shellcheck disable=SC2207
+                        COMPREPLY=( $(compgen -W "$names --cloud --ports --help" -- "$cur") )
+                    else
+                        # shellcheck disable=SC2207
+                        COMPREPLY=( $(compgen -W "--cloud --ports --help" -- "$cur") )
+                    fi
                 fi
                 ;;
 
