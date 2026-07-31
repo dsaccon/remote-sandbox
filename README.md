@@ -5,18 +5,30 @@ Claude Code. One fresh box per task, terminated when done.
 
 See `docs/specs/2026-05-12-remote-sandbox-design.md` for the full design and
 `docs/superpowers/plans/2026-05-12-remote-sandbox.md` for the build plan.
+Planned / candidate features live in `docs/BACKLOG.md`.
 
 ## Local footprint — deliberately tiny
 
 This is a near-zero-dependency utility by design. Everything you have to
-install on the laptop:
+install on the laptop, on a fresh macOS box:
 
 ```bash
-brew install awscli jq
+brew install jq                 # always
+brew install awscli             # only if you use AWS
+brew install --cask gcloud-cli  # only if you use GCP
 ```
 
-That's it.
+That's it: `jq`, plus one CLI per cloud you actually launch boxes in.
 
+- **The two cloud CLIs are independent.** A GCP-only setup never needs
+  `awscli`, and an AWS-only setup never needs `gcloud`. The cross-cloud
+  commands (`list`, `list-images`, `ssh`, `scp`, `down`) skip any cloud whose
+  CLI or credentials aren't usable instead of erroring, so an uninstalled one
+  is harmless.
+- **`gcloud` needs no extra components.** The GCP driver only calls GA
+  `gcloud compute instances|images|firewall-rules` — no `alpha`/`beta`, no
+  `gsutil`, no IAP tunneling. The cask pulls in its own Python (`python@3.14`)
+  as a Homebrew dependency; you don't manage that yourself.
 - **Already on macOS, no install needed:** `git`, `curl`, `ssh`, `scp`,
   `bash` (3.2 is fine — scripts are 3.2-clean), `awk`, `sed`, `date`,
   `openssl`.
@@ -33,8 +45,11 @@ should run with minimal local trust.
 ## Prerequisites
 
 - macOS laptop (Linux works too; install/setup commands assume macOS)
+- `jq` — `brew install jq`. Required for both clouds.
+
+For AWS sandboxes:
+
 - `aws` CLI v2, configured (`aws sts get-caller-identity` works) — installed via `brew install awscli`
-- `jq` — installed via `brew install jq`
 - An EC2 key pair created in `us-west-2`, named whatever you set as
   `SSH_KEY_NAME` in `./config` (default: `claude-sandbox`). Save its
   private key somewhere your SSH agent or `~/.ssh/config` can find:
@@ -44,6 +59,13 @@ should run with minimal local trust.
       --query KeyMaterial --output text > ~/.ssh/claude-sandbox.pem
   chmod 600 ~/.ssh/claude-sandbox.pem
   ```
+
+For GCP sandboxes:
+
+- `gcloud` CLI, authenticated for your project (`gcloud auth list` shows your
+  account) — installed via `brew install --cask gcloud-cli`
+- A GCP project and a service account key — see "Using GCP" below for the
+  roles it needs and the `.env` / `./config` wiring
 
 ### AWS IAM permissions
 
@@ -130,7 +152,8 @@ AMI-equivalent baking yet (see below).
 
 Prerequisites:
 
-- `gcloud` CLI installed and authenticated for your project.
+- `gcloud` CLI installed (`brew install --cask gcloud-cli`) and authenticated
+  for your project. No extra `gcloud components` are needed.
 - A GCP project (its ID goes in `GCP_PROJECT` below).
 - A service account with permission to create/delete both instances and
   firewall rules. `up` creates a per-sandbox firewall rule (and `down`
