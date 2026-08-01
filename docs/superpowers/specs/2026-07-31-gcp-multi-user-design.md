@@ -1,6 +1,7 @@
 # GCP Multi-User — Design
 
 **Date:** 2026-07-31
+**Revised:** 2026-08-01 — identity source corrected (see "Correction" below)
 **Status:** Draft, pending user review
 
 ## Goal
@@ -9,81 +10,110 @@ Let several people share one GCP project without stepping on each other. Each
 user sees and manages only their own sandboxes; baked images stay shared, but
 carry enough provenance to decide whether you want to boot someone else's.
 
+## Correction (2026-08-01)
+
+The first draft derived identity from a service-account key JSON at
+`$GOOGLE_APPLICATION_CREDENTIALS`. That was wrong on three counts:
+
+1. That variable is **not set** in this repo's `.env`, and the working setup
+   authenticates as a **user account** (`gcloud auth login`), not a service
+   account.
+2. Nothing in the codebase reads it. `gcp.sh:33` mentions it only inside an
+   error-message string; `init.sh:50` exports it *if already set*, which has
+   never fired.
+3. The `gcloud` CLI doesn't consult it anyway — it drives Application Default
+   Credentials for client libraries, while `gcloud` uses its own credential
+   store.
+
+Identity now comes from gcloud's **active account**.
+
 ## Scope
 
-**In:** owner identity derived from the GCP service account; `list`, `ssh`,
+**In:** owner identity derived from gcloud's active account; `list`, `ssh`,
 `scp`, `down` (single / `--all` / `--stale`) and tab completion scoped to the
-calling user; image provenance labels + manifest; `list-images` OWNER/BOOTSTRAP
-columns; `image-info`; `delete-image` ownership guard.
+calling user; image provenance labels + manifest; `list-images`
+OWNER/BOOTSTRAP columns; `image-info`; `delete-image` ownership guard.
 
-**Deferred (follow-up spec):** the same treatment for AWS. Until then the AWS
-`Owner` tag keeps its `$USER@hostname` value and AWS boxes are **not** filtered
-— a cross-cloud `list` shows GCP scoped to you and AWS unscoped. Accepted
-deliberately: there is one user today.
+**Deferred:** the same treatment for AWS, as its own spec — it needs a
+different identity source, since there's no local credential file to read.
+Until then AWS boxes are **not** filtered, so a cross-cloud `list` shows GCP
+scoped and AWS unscoped. Accepted deliberately: there is one user today.
 
 **Explicitly out:** any migration code. Resources predating this change carry
-no `owner` label and therefore won't match anyone's filter. Relabelling is a
-manual, one-off `gcloud` chore done before a second user is onboarded — see
-"Manual onboarding" below. No `reclaim` command, no legacy-format fallbacks.
+no `owner` label and won't match anyone's filter. Relabelling is a manual,
+one-off `gcloud` chore done before a second user is onboarded — see "Manual
+onboarding". No `reclaim` command, no legacy-format fallbacks.
 
 ## Threat model
 
 This is a **safety rail, not a security boundary.** Filtering happens
 client-side in this CLI. Anyone holding `roles/compute.instanceAdmin.v1` on the
-project can bypass it entirely with raw `gcloud`. It prevents accidents — a
-mistyped `down --all` taking out a colleague's work — and nothing more.
+project can bypass it with raw `gcloud`. It prevents accidents — a mistyped
+`down --all` taking out a colleague's work — and nothing more.
 
-A real boundary would need IAM conditions on resource labels, per-user service
-accounts with narrowed roles, or separate projects. Cloud Audit Logs remain the
-tamper-proof record of who actually created and deleted what
-(`gcloud logging read`), and are the ground truth if labels ever disagree.
+A real boundary would need IAM conditions on resource labels, per-user narrowed
+roles, or separate projects. Cloud Audit Logs remain the tamper-proof record of
+who created and deleted what (`gcloud logging read`), and are ground truth if
+labels ever disagree.
 
-**Prerequisite:** each user authenticates as their **own service account**. Two
-people sharing one key are the same principal — same audit entries, same
-derived owner — and filtering would do nothing.
+**Prerequisite:** each user authenticates as their **own Google account** via
+`gcloud auth login`. Two people sharing one credential are one principal — same
+audit entries, same derived owner — and filtering would do nothing.
 
 ## Decisions summary
 
 | Topic | Decision |
 |---|---|
-| Owner identity | The service account's `client_email`, read from the key JSON at `$GOOGLE_APPLICATION_CREDENTIALS`. |
-| Why not `$USER@hostname` | A second, weaker identity that can disagree with the authoritative one. It was a single-user breadcrumb, not a discriminator. |
-| Why not `gcloud auth list` | Same answer, ~1–2s slower. The key file is a local read; `gcloud`'s Python startup is not, and this sits in the tab-completion path. |
-| Cost | Zero API calls. One `jq` read of a local file, memoized per process. |
-| Storage | Label `owner=<local-part>` (server-side filterable) + full email in instance metadata `owner` (audit, disambiguation). |
-| Why both | GCP label values forbid `@` and `.`, so the full email can't be a label. SA account IDs are lowercase alphanumeric + hyphens — already label-legal — so the local part works. |
+| Owner identity | gcloud's active account (e.g. `david@synesis.one`), read from gcloud's own config files. |
+| Why not `$USER@hostname` | A second, weaker identity that can disagree with the principal GCP authenticates. It was a single-user breadcrumb, not a discriminator. |
+| Why not `gcloud config get-value account` | Correct but ~1–2s per call, dominated by gcloud's Python startup — and this sits in the tab-completion path. Used only as a fallback. |
+| Cost | Two small local file reads. No process spawn, no API call. |
+| Storage | Label `owner=<sanitized full email>` (server-side filterable) + unmodified email in instance metadata `owner` (authoritative, audit). |
+| Why both | GCP label values allow only `[a-z0-9_-]`, so `david@synesis.one` can't be a label; the sanitized form `david-synesis-one` can. |
+| Display | Local part (`david`) in list columns; full email available via metadata. |
 | Instance scope | Hard isolation. No `--all-users` escape hatch. |
-| Image scope | Visible to all; `delete-image` guarded. |
+| Image scope | Visible to all; `delete-image` guarded, failing closed. |
 | Unresolvable identity | Hard error. Never fall back to unfiltered. |
 
 ## Architecture
 
 ### `lib/identity.sh` (new)
 
-    sandbox_owner_email   -> jane-sandbox@proj.iam.gserviceaccount.com
-    sandbox_owner_label   -> jane-sandbox
+    sandbox_owner_email   -> david@synesis.one
+    sandbox_owner_label   -> david-synesis-one
 
-`sandbox_owner_email` reads `.client_email` from the file named by
-`$GOOGLE_APPLICATION_CREDENTIALS`. `sandbox_owner_label` takes the part before
-`@` and lowercases it. If anything outside `[a-z0-9_-]` remains it **dies**
-rather than stripping the offending characters — silently rewriting could map
-two distinct identities onto one label. The check is defensive: GCP already
-constrains SA account IDs to that charset. Both functions memoize into a shell
-variable, so identity resolves at most once per process.
+**`sandbox_owner_email`** reads gcloud's active account from disk:
+
+1. Config root is `$CLOUDSDK_CONFIG` if set, else `~/.config/gcloud`.
+2. Active config name is `$CLOUDSDK_ACTIVE_CONFIG_NAME` if set, else the
+   contents of `<root>/active_config`, else `default`.
+3. Read `account` from the `[core]` section of
+   `<root>/configurations/config_<name>`.
+
+If any step fails, fall back to `gcloud config get-value account`. The fast
+path stays fast; correctness doesn't depend on gcloud's internal layout
+holding. Memoized into a shell variable — resolved at most once per process.
+
+**`sandbox_owner_label`** lowercases the email and replaces every character
+outside `[a-z0-9_-]` with `-`. It uses the **full** email, not the local part:
+`first.last@corp.com` and `first-last@corp.com` would otherwise both reduce to
+`first-last`, and a label collision silently breaks isolation by showing two
+people each other's boxes. `die` if the result exceeds the 63-char label limit.
 
 Sourced by the GCP driver **and** by `completion/sandbox.sh`, which queries
 `gcloud` directly rather than going through the driver and so must resolve
-identity itself. The AWS driver does not consume it until the follow-up spec.
+identity itself. The AWS driver does not consume it.
 
 ### Instances
 
 **Launch** (`provider_launch`, `gcp.sh:203`) — add `owner=<label>` to the
-existing `--labels`, and set the existing `--metadata` `owner=` to the full
-email instead of `$USER@hostname`. No new API calls; both flags already exist.
+existing `--labels`, and set the existing `--metadata` `owner=` to the
+unmodified email instead of `$USER@hostname`. No new API calls; both flags
+already exist.
 
 **List** (`provider_list`, `gcp.sh:278`) — the filter becomes:
 
-    labels.project=claude-sandbox AND labels.owner=<me>
+    labels.project=claude-sandbox AND labels.owner=<label>
 
 Server-side. The jq pipeline is untouched.
 
@@ -94,21 +124,19 @@ must check `labels.owner` against the caller and `die` with the existing
 <colleague-box>` reaches a foreign box by name; it would fail on the SSH key,
 but should fail cleanly at the CLI instead.
 
-**Destructive paths need no changes.** `down <name>`, `--all` and `--stale` all
+**Destructive paths need no changes.** `down <name>`, `--all` and `--stale`
 route through `mc_find` / `provider_list_all` (`lib/multicloud.sh:38`), which
-consume `provider_list`. Scoping the filter scopes the blast radius. This is
+consume `provider_list`. Scoping the filter scopes the blast radius. That is
 the whole safety property, and it falls out of one string.
 
 ### Completion
 
 `_sandbox_names_gcp` (`completion/sandbox.sh:85`) queries `gcloud` with its own
-filter and needs the same `labels.owner` predicate. Otherwise Tab suggests
-boxes that `ssh` then rejects — worse than no completion. It sources
-`lib/identity.sh` for itself. Cache mechanics (`_SANDBOX_CACHE_TTL=15`) are
-unchanged; the added work on a cold Tab is one local `jq` read of the key file,
-and the warm path is untouched. This is the reason identity must not require a
-`gcloud` or `aws` invocation — those would land squarely in the completion path
-and undo the latency work in `fd5650c` / `e2fea07`.
+filter and needs the same `labels.owner` predicate, or Tab suggests boxes that
+`ssh` then rejects — worse than no completion. It sources `lib/identity.sh`
+itself. Cache mechanics (`_SANDBOX_CACHE_TTL=15`) are unchanged; the added work
+on a cold Tab is two local file reads, which is why identity must not spawn
+`gcloud`.
 
 ### Images
 
@@ -116,94 +144,91 @@ Images are created today with a name and `--family` and nothing else
 (`gcp.sh:137`). Two bakes of the same `bootstrap.sh` are not equivalent, so
 provenance records what actually varies:
 
-- **`DOTFILES_REPO` / `CLAUDE_HARDENING_REPO`** are baked in — `bootstrap.sh:81-92`
-  clones each and runs its `install.sh`. Booting a shared image runs whatever
-  the baker's dotfiles installed. This is the most important field to surface.
-- **Tool versions.** Node, bun, uv, docker, gh and neovim are all fetched
-  unpinned (`bootstrap.sh:22-64`), so bake date changes the contents.
+- **`DOTFILES_REPO` / `CLAUDE_HARDENING_REPO`** are baked in —
+  `bootstrap.sh:81-92` clones each and runs its `install.sh`. Booting a shared
+  image runs whatever the baker's dotfiles installed. The most important field
+  to surface.
+- **Tool versions.** Node, bun, uv, docker, gh and neovim are fetched unpinned
+  (`bootstrap.sh:22-64`), so bake date changes the contents.
 
-**Labels** (structured, filterable): `owner`, `bootstrap=<first 12 hex of
-sha256(ami/bootstrap.sh)>`, `base=<source image family>`.
+**Labels:** `owner`, `bootstrap=<first 12 hex of sha256(ami/bootstrap.sh)>`,
+`base=<source image family>`.
 
 **Description** (free text, 2048-char budget) — the manifest: baker email,
 bootstrap hash, both repo URLs, base image, bake timestamp, and tool versions
 harvested over the SSH session the bake already holds open.
 
 **`list-images`** stays unfiltered and gains OWNER and BOOTSTRAP columns.
-Images without an owner label show `-`.
+Images with no owner label show `-`.
 
 **`image-info <name>`** (new) prints the manifest.
 
-**`delete-image`** refuses when an image carries an `owner` label that isn't
-yours, unless `--force`. A *missing* owner label is allowed through — those are
-pre-provenance images, and guarding them would only obstruct the one user who
-has them.
+**`delete-image` fails closed:** it refuses unless the image's `owner` label
+matches you; `--force` overrides. A *missing* label counts as not-yours. Every
+image predating this change is unlabelled, but manual relabelling covers those,
+so a permanent permissive branch for a transient state isn't warranted.
 
 ## Data flow — `sandbox list` (CLOUD=gcp)
 
 1. `bin/sandbox-list` → `provider_list_all` → GCP driver.
-2. Driver sources `lib/identity.sh`; `sandbox_owner_label` reads the key file
-   (local, memoized).
+2. Driver sources `lib/identity.sh`; `sandbox_owner_label` reads gcloud's
+   config files (local, memoized).
 3. `gcloud compute instances list --filter="labels.project=claude-sandbox AND
-   labels.owner=<me>"`.
+   labels.owner=<label>"`.
 4. Existing jq pipeline emits the normalized 10-field record. Unchanged.
 
 ## Error handling
 
 | Condition | Behavior |
 |---|---|
-| `GOOGLE_APPLICATION_CREDENTIALS` unset | `die`: point at the README's GCP setup. |
-| File missing / unreadable | `die` with the path. |
-| Not valid JSON, or no `client_email` | `die`: "not a service account key — user-account ADC isn't supported for multi-user". |
-| Local part not label-legal after sanitizing | `die` with the offending value. |
+| gcloud config files unreadable *and* `gcloud config get-value account` fails | `die`: "cannot determine your gcloud account — run `gcloud auth login`". |
+| Active account empty (never authenticated) | Same `die`. |
+| Sanitized label exceeds 63 chars | `die` with the offending value. |
 | `ssh`/`scp`/`down` naming a foreign box | `die` "no sandbox named X (try ./bin/sandbox list)" — the existing message. |
-| `delete-image` on a foreign image | `die` naming the owner, suggesting `--force`. |
+| `delete-image` on a foreign or unlabelled image | `die` naming the owner (or "unlabelled"), suggesting `--force`. |
 
-Every failure is fatal by design. A fallback to unfiltered operation would
+Every failure is fatal by design. Falling back to unfiltered operation would
 silently restore the accident this feature exists to prevent.
 
 ## Testing
 
 Extend `test/unit/gcp.bats`; add `test/unit/identity.bats`. Existing
-`GCLOUD_CMD` stub seam and a fixture SA key JSON under `test/unit/stubs/`.
+`GCLOUD_CMD` stub seam, plus fixture gcloud config files in a temp
+`$CLOUDSDK_CONFIG` — which makes the fast path directly testable without
+touching the real `~/.config/gcloud`.
 
-- Identity: happy path; each failure mode in the table above; memoization.
-- Launch: `owner` label applied; metadata holds the full email.
+- Identity: fast path; `CLOUDSDK_ACTIVE_CONFIG_NAME` honored; non-default
+  config name; fallback to `gcloud` when files are absent; both-fail `die`;
+  sanitization of dots and `@`; over-63-char `die`; memoization.
+- Launch: `owner` label applied; metadata holds the unmodified email.
 - List: filter string carries `labels.owner`.
 - Resolve: foreign box rejected by `ssh` and `scp`.
 - Down: `--all` and `--stale` exclude foreign boxes.
 - Completion: `_sandbox_names_gcp` filter carries owner.
 - Images: labels + description written at bake; `list-images` unfiltered and
   renders OWNER/BOOTSTRAP; `image-info` prints the manifest; `delete-image`
-  guard fires on foreign, passes on unlabelled, passes on `--force`.
+  refuses foreign, refuses unlabelled, passes on `--force`.
 
 ## Manual onboarding (no code)
 
 Before a second user starts, relabel existing resources once:
 
     gcloud compute instances add-labels NAME --zone ZONE \
-        --labels=owner=<your-sa-local-part> --project PROJECT
+        --labels=owner=<your-sanitized-email> --project PROJECT
     gcloud compute images add-labels NAME \
-        --labels=owner=<your-sa-local-part> --project PROJECT
+        --labels=owner=<your-sanitized-email> --project PROJECT
 
-Anything left unlabelled stays invisible to `list` and untouched by `down`, and
-must be managed with raw `gcloud`.
+Anything left unlabelled stays invisible to `list`, untouched by `down`, and
+undeletable by `delete-image` without `--force`.
 
 ## Open questions / risks
 
 - **No escape hatch, by choice.** Cleaning up a departed colleague's boxes
-  requires raw `gcloud`. Accepted as the cost of hard isolation.
-- **Local-part collisions.** Two SAs in different projects could share a local
-  part. Irrelevant for a single shared project; the full email in metadata
-  disambiguates if it ever matters.
-- **`.env.example` omits `GOOGLE_APPLICATION_CREDENTIALS`** — the README tells
-  you to append it by hand. Worth fixing alongside, since identity now depends
-  on it.
-
-## Out of scope / future work
-
-- AWS multi-user (follow-up spec): needs a different identity source, since
-  there's no local credential file to read. Either the access key ID (free,
-  unreadable) or `aws sts get-caller-identity` (~1s, human-readable ARN).
-- IAM-enforced isolation via label conditions or per-user projects.
-- Pinning tool versions in `bootstrap.sh` so bakes are reproducible.
+  needs raw `gcloud`. Accepted as the cost of hard isolation.
+- **gcloud's config layout is internal.** The fast path could break on a future
+  gcloud release; the `gcloud config get-value account` fallback covers it, at
+  the cost of a slow Tab until someone notices.
+- **`README.md:165-181` / `init.sh:47-53` document a credential mechanism
+  nothing reads.** Pre-existing and independent of this feature; tracked in
+  `docs/BACKLOG.md`. Noted here only because this spec's identity source
+  replaces the assumption they encode.
