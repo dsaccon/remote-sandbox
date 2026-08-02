@@ -5,7 +5,14 @@ if [[ -n "${_SANDBOX_PROVIDER_AWS_LOADED:-}" ]]; then return 0; fi
 _SANDBOX_PROVIDER_AWS_LOADED=1
 _paws_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # provision.sh transitively sources log.sh, common.sh (Task 2), and aws.sh.
-# shellcheck source=../provision.sh
+# Deliberately NOT followed by shellcheck (source=/dev/null). provision.sh
+# carries `# shellcheck source=aws.sh`, and with source-path=SCRIPTDIR that
+# resolves relative to the file being checked — so entering from here it points
+# back at lib/providers/aws.sh, not lib/aws.sh. The two share a basename, and
+# the resulting cycle expands until shellcheck is OOM-killed. provision.sh is
+# linted directly (and follows lib/aws.sh correctly from there), so nothing is
+# actually unchecked.
+# shellcheck source=/dev/null
 source "$_paws_dir/../provision.sh"
 
 # ---- provider contract (AWS) ----
@@ -94,12 +101,16 @@ _aws_build_image() {
     log_info "bake VM: $instance_id"
 
     # Cleanup-on-failure trap leaves the instance up so the user can debug.
+    # _bake_ip is the trap's own: assigning the function's $ip from here would
+    # clobber the value the rest of the bake is using. NOT local — the trap body
+    # runs after this function's locals are out of scope.
+    _bake_ip=""
     cleanup_on_failure=1
     trap '
         if [[ $cleanup_on_failure -eq 1 ]]; then
             log_warn "bake failed; leaving $instance_id running for debugging."
-            ip="$(aws_get_instance_ip "$instance_id" 2>/dev/null || echo "?")"
-            echo "  Debug:  ssh ${SSH_USER}@${ip}"
+            _bake_ip="$(aws_get_instance_ip "$instance_id" 2>/dev/null || echo "?")"
+            echo "  Debug:  ssh ${SSH_USER}@${_bake_ip}"
             echo "  Tear down when done:  ./bin/sandbox down $instance_id"
         fi' EXIT
 

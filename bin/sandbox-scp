@@ -299,6 +299,11 @@ if (( download )); then
                 # line), so a leading ~ would otherwise reach scp as a
                 # literal character. Expand the common ~ and ~/path forms
                 # ourselves; deliberately no eval (reply is user-typed text).
+                # SC2088: the "~/" below is a literal the user typed, not a path
+                # for the shell to expand — matching it verbatim is the point.
+                # The directive sits on the whole `case`: shellcheck rejects
+                # directives in front of individual case branches (SC1124).
+                # shellcheck disable=SC2088
                 case "$reply" in
                     "~")   reply="$HOME" ;;
                     "~/"*) reply="$HOME/${reply#\~/}" ;;

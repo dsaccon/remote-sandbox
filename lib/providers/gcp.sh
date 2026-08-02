@@ -80,13 +80,16 @@ _gcp_build_image() {
     printf '%s:%s\n' "${SSH_USER:-ubuntu}" "$(cat "$pub")" > "$kf"
 
     # Leave the VM + firewall up on failure so the bake can be debugged.
+    # _bake_ip is assigned inside the trap body below; declare it here so it is
+    # visibly part of the same NOT-local set as bake_name / kf.
+    _bake_ip=""
     cleanup_on_failure=1
     trap '
         rm -f "$kf"
         if [[ $cleanup_on_failure -eq 1 ]]; then
             log_warn "bake failed; leaving $bake_name up for debugging."
-            _ip="$(_gcloud compute instances describe "$bake_name" --zone="$GCP_ZONE" --format="value(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || echo "?")"
-            echo "  Debug:  ssh ${SSH_USER:-ubuntu}@${_ip}"
+            _bake_ip="$(_gcloud compute instances describe "$bake_name" --zone="$GCP_ZONE" --format="value(networkInterfaces[0].accessConfigs[0].natIP)" 2>/dev/null || echo "?")"
+            echo "  Debug:  ssh ${SSH_USER:-ubuntu}@${_bake_ip}"
             echo "  Tear down:"
             echo "    gcloud compute instances delete $bake_name --zone $GCP_ZONE --project $GCP_PROJECT --quiet"
             echo "    gcloud compute firewall-rules delete ${bake_name}-fw --project $GCP_PROJECT --quiet"
