@@ -254,6 +254,97 @@ Two things to know:
 AWS boxes are **not** scoped yet, so a cross-cloud `list` shows GCP filtered and
 AWS unfiltered.
 
+### Onboarding another user
+
+#### 1. Grant them IAM (project owner does this once)
+
+GCP IAM binds at the project level, so these grant nothing outside
+`$GCP_PROJECT`. They need a Google identity — a Workspace address, or any
+Google account; the binding itself is the invitation.
+
+```bash
+COLLEAGUE="user:them@example.com"
+PROJECT="your-project-id"
+
+# Instances.
+gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member="$COLLEAGUE" --role="roles/compute.instanceAdmin.v1"
+
+# Per-sandbox firewall rules — `up` creates one, `down` deletes it, so
+# instance permissions alone are not enough.
+gcloud projects add-iam-policy-binding "$PROJECT" \
+    --member="$COLLEAGUE" --role="roles/compute.securityAdmin"
+
+# Instances are created with the default compute service account attached,
+# and attaching one requires this on that account. Without it `up` fails with
+# a permission error that never mentions service accounts.
+PROJNUM="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')"
+gcloud iam service-accounts add-iam-policy-binding \
+    "${PROJNUM}-compute@developer.gserviceaccount.com" \
+    --project="$PROJECT" \
+    --member="$COLLEAGUE" --role="roles/iam.serviceAccountUser"
+```
+
+Check it took:
+
+```bash
+gcloud projects get-iam-policy "$PROJECT" \
+    --flatten="bindings[].members" \
+    --filter="bindings.members:them@example.com" \
+    --format="table(bindings.role)"
+```
+
+#### 2. Their machine
+
+```bash
+brew install jq
+brew install --cask gcloud-cli
+
+gcloud auth login          # as themselves — this becomes their owner identity
+
+git clone <this repo> && cd remote-sandbox
+cp config.example config
+cp .env.example .env       # REQUIRED even though GCP reads nothing from it:
+                           # init.sh exits if the file is missing.
+
+ssh-keygen -t ed25519 -f ~/.ssh/claude-sandbox    # if they have no key yet
+```
+
+Then in `./config`:
+
+```bash
+CLOUD="gcp"
+GCP_PROJECT="your-project-id"
+GCP_ZONE="us-west1-b"
+GCP_IMAGE="claude-sandbox-YYYYMMDD-HHMMSS"   # a baked image; skip for slow first boots
+SSH_KEY_FILE="/Users/them/.ssh/claude-sandbox"
+GCP_SSH_PUBKEY="/Users/them/.ssh/claude-sandbox.pub"
+SSH_INGRESS_CIDR="0.0.0.0/0"                 # see "Prerequisites" on egress IPs
+```
+
+`GCP_SSH_PUBKEY` matters: it defaults to `${SSH_KEY_FILE}.pub`, which for the
+default `SSH_KEY_FILE` would be `claude-sandbox.pem.pub` — a filename nobody
+has. Set both explicitly and the default never applies.
+
+Finally `source ./init.sh`. Nothing else identifies them: the owner label is
+derived from their gcloud account automatically.
+
+#### 3. Confirm the isolation actually works
+
+Each person launches a box, then both run `./bin/sandbox list` — each should
+see only their own. Then have them run `./bin/sandbox down --all` and **decline
+at the prompt**: it lists what it would terminate, and your boxes must not
+appear.
+
+#### 4. Tell them what isn't covered yet
+
+- **Don't use the AWS path from this repo.** It isn't owner-scoped, so their
+  `down --all` would terminate everyone's EC2 boxes.
+- **Don't run `delete-image`.** Baked images are shared and carry no ownership
+  guard, so it will happily delete someone else's.
+- **A box they can't see is unmanageable** from this CLI — no `--all-users`
+  view exists. Orphans need raw `gcloud`.
+
 ## Each new terminal
 
 `aws` CLI and `./bin/sandbox` both read credentials from environment variables.
