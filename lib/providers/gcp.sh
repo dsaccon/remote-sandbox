@@ -9,6 +9,10 @@ source "$_gcp_sh_dir/../log.sh"
 # common.sh gives resolve_ssh_cidr (used by the bake); harmless if already loaded.
 # shellcheck source=../common.sh
 source "$_gcp_sh_dir/../common.sh"
+# identity.sh gives sandbox_owner_email / sandbox_owner_label — sandboxes are
+# scoped to the gcloud account that launched them.
+# shellcheck source=../identity.sh
+source "$_gcp_sh_dir/../identity.sh"
 _gcp_repo_bootstrap="$(cd "$_gcp_sh_dir/../.." && pwd)/ami/bootstrap.sh"
 
 : "${GCLOUD_CMD:=gcloud}"
@@ -203,7 +207,12 @@ provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
     local name="$1" repo="$2" use_spot="$3" cidr="$4"
     local zone="$GCP_ZONE" hours="${AUTO_SHUTDOWN_HOURS:-0}"
     local pub="${GCP_SSH_PUBKEY:-${SSH_KEY_FILE}.pub}"
-    local owner; owner="${USER:-unknown}@$(hostname -s 2>/dev/null || hostname)"
+    # Owner is gcloud's active account — the principal GCP actually
+    # authenticates, not a local guess. Declared then assigned: under `set -e`,
+    # `local x="$(...)"` would mask a die() from the identity helpers.
+    local owner owner_label
+    owner="$(sandbox_owner_email)"
+    owner_label="$(sandbox_owner_label)"
 
     # per-sandbox firewall (global object, scoped by target tag)
     _gcloud compute firewall-rules create "${name}-fw" \
@@ -224,7 +233,7 @@ provider_launch() {  # NAME REPO USE_SPOT CIDR -> instance name
         --machine-type="${GCP_MACHINE_TYPE}"
         --boot-disk-size="${DISK_SIZE_GB:-64}GB"
         --tags="$name"
-        --labels="project=claude-sandbox,name=$name"
+        --labels="project=claude-sandbox,name=$name,owner=$owner_label"
         --metadata="owner=$owner,auto-shutdown-hours=$hours"
         --metadata-from-file="ssh-keys=$kf,startup-script=$sf"
         --format="value(name)")
@@ -275,8 +284,13 @@ gcp_map_state() {
 
 provider_list() {
     local inst fw
+    # Owner-scoped: this filter is what makes `down --all` / `--stale` safe in a
+    # shared project, since they consume provider_list via provider_list_all.
+    local owner_label
+    owner_label="$(sandbox_owner_label)"
     inst="$(_gcloud compute instances list \
-        --filter="labels.project=claude-sandbox" --zones="$GCP_ZONE" --format=json 2>/dev/null || echo '[]')"
+        --filter="labels.project=claude-sandbox AND labels.owner=$owner_label" \
+        --zones="$GCP_ZONE" --format=json 2>/dev/null || echo '[]')"
     fw="$(_gcloud compute firewall-rules list \
         --filter="name~-fw$" --format=json 2>/dev/null || echo '[]')"
     # jq emits: name rawstatus machinetype market rawts ip ash allowed disk
@@ -304,6 +318,15 @@ provider_resolve_ip() {   # NAME -> IP or die
     local name="$1" json status ip
     json="$(_gcloud compute instances describe "$name" --zone="$GCP_ZONE" --format=json 2>/dev/null || true)"
     [[ -z "$json" ]] && die "no sandbox named $name in $GCP_ZONE (try ./bin/sandbox list)"
+    # `instances describe` bypasses the owner filter in provider_list, so check
+    # ownership here too — otherwise `ssh <colleague-box>` resolves by name.
+    # Same wording as not-found: a box you don't own is, as far as this CLI is
+    # concerned, not there.
+    local owner_label box_owner
+    owner_label="$(sandbox_owner_label)"
+    box_owner="$(printf '%s' "$json" | jq -r '.labels.owner // empty')"
+    [[ "$box_owner" == "$owner_label" ]] \
+        || die "no sandbox named $name in $GCP_ZONE (try ./bin/sandbox list)"
     status="$(printf '%s' "$json" | jq -r '.status // empty')"
     case "$status" in
         PROVISIONING|STAGING) die "sandbox $name is still booting (status: $status). Try again shortly." ;;
