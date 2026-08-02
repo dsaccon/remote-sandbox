@@ -52,20 +52,31 @@ provider_list_all() {
     return 0
 }
 
-# mc_find NAME [SCOPE] — print the single matching record (10-field row) for the
-# box whose name OR handle == NAME across the in-scope clouds. die on no match or
-# on an ambiguous match (same name in >1 cloud). Used by ssh/scp/down.
+# mc_find NAME [SCOPE] — print the single matching record (11-field row) for the
+# box whose name OR handle == NAME across the in-scope clouds. die on no match,
+# or on an ambiguous one. Used by ssh/scp/down.
 mc_find() {
-    local name="$1" scope="${2:-}" rows match count provs
+    local name="$1" scope="${2:-}" rows match live count clouds ncloud
     rows="$(provider_list_all "$scope")"
     match="$(printf '%s\n' "$rows" | awk -F'\t' -v n="$name" '$3==n || $2==n')"
     if [[ -z "$match" ]]; then
         die "no sandbox named $name in ${scope:-aws or gcp} (try ./bin/sandbox list)"
     fi
+    # A terminated box keeps its name resolvable for as long as the cloud goes on
+    # listing it (~1h on AWS), so reusing a name would otherwise make every
+    # lookup ambiguous — you couldn't even `down` the new box by name. Prefer
+    # boxes that still exist; fall back to the dead ones only when that's all
+    # there is, which is the case `down` cleans up after.
+    live="$(printf '%s\n' "$match" | awk -F'\t' '$4 != "terminated" && $4 != "shutting-down"')"
+    [[ -n "$live" ]] && match="$live"
     count="$(printf '%s\n' "$match" | grep -c .)"
     if [[ "$count" -gt 1 ]]; then
-        provs="$(printf '%s\n' "$match" | awk -F'\t' '{print $1}' | tr '\n' ' ')"
-        die "sandbox $name exists in more than one cloud (${provs% }) — pick one with --cloud"
+        clouds="$(printf '%s\n' "$match" | awk -F'\t' '{print $1}' | sort -u | tr '\n' ' ')"
+        ncloud="$(printf '%s\n' "$match" | awk -F'\t' '{print $1}' | sort -u | grep -c .)"
+        if [[ "$ncloud" -gt 1 ]]; then
+            die "sandbox $name exists in more than one cloud (${clouds% }) — pick one with --cloud"
+        fi
+        die "$count live sandboxes are named $name in ${clouds% } — address one by its instance id instead"
     fi
     printf '%s' "$match"
 }
@@ -97,6 +108,33 @@ mc_resolve_ip() {
 # mc_terminate — read "provider<TAB>handle<TAB>name" rows on stdin; group by
 # provider and terminate + clean up per cloud (each in a subshell with that
 # driver loaded). Logs a one-line summary per cloud.
+# mc_cleanup_net — read "provider<TAB>name" rows on stdin and delete each box's
+# per-sandbox network resources (AWS SG / GCP firewall rule) via its cloud's
+# driver, without touching instances. Used by `down` on a box that is already
+# gone: the instance is terminated, but AWS keeps its security group, and an
+# orphaned one blocks `up --name <same>` with InvalidGroup.Duplicate forever.
+mc_cleanup_net() {
+    local input; input="$(cat)"
+    [[ -z "$input" ]] && return 0
+    local prov
+    for prov in $_MC_CLOUDS; do
+        local names=() p n
+        while IFS=$'\t' read -r p n; do
+            [[ "$p" == "$prov" ]] || continue
+            [[ -z "$n" ]] && continue
+            names+=("$n")
+        done <<< "$input"
+        [[ ${#names[@]} -eq 0 ]] && continue
+        (
+            set +e
+            CLOUD="$prov"
+            provider_load 2>/dev/null || exit 0
+            provider_cleanup_net "${names[@]}"
+            exit 0
+        )
+    done
+}
+
 mc_terminate() {
     local input; input="$(cat)"
     [[ -z "$input" ]] && return 0

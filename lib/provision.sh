@@ -108,7 +108,11 @@ provision_launch() {
             : # spot succeeded
         elif grep -q "InsufficientInstanceCapacity" "$err_log" && [[ "${SPOT_FALLBACK_ON_DEMAND:-false}" == "true" ]]; then
             log_warn "spot unavailable, falling back to on-demand"
-            id="$(_run_instances "$name" false "$sg_id" "$user_data_b64")"
+            if ! id="$(_run_instances "$name" false "$sg_id" "$user_data_b64" 2>"$err_log")"; then
+                local err; err="$(cat "$err_log")"
+                rm -f "$err_log"
+                die "run-instances (on-demand fallback) failed: $err"
+            fi
         else
             local err; err="$(cat "$err_log")"
             rm -f "$err_log"
@@ -116,7 +120,11 @@ provision_launch() {
         fi
     else
         log_info "requesting on-demand instance ($INSTANCE_TYPE)..."
-        id="$(_run_instances "$name" false "$sg_id" "$user_data_b64")"
+        if ! id="$(_run_instances "$name" false "$sg_id" "$user_data_b64" 2>"$err_log")"; then
+            local err; err="$(cat "$err_log")"
+            rm -f "$err_log"
+            die "run-instances (on-demand) failed: $err"
+        fi
     fi
     rm -f "$err_log"
 

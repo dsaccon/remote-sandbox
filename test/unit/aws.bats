@@ -58,3 +58,58 @@ set_response() {
     grep -q -- 'ec2 authorize-security-group-ingress' "$AWS_STUB_LOG"
     grep -q -- '1.2.3.4/32' "$AWS_STUB_LOG"
 }
+
+# Regression: the normalized record is consumed with `read -r` under
+# IFS=$'\t', and tab is an IFS-whitespace character, so a run of tabs collapses
+# into ONE separator. Every field in the jq array therefore emits a "-"
+# placeholder rather than an empty string — except .InstanceType and
+# .LaunchTime, which didn't. An instance missing both produced two adjacent
+# empty fields, collapsing the row and shifting every later column left by two:
+# `type` received the IP, `cidr` received the market, and `ip` received "-".
+# That is why `ssh <name>` resolved to `ubuntu@on-demand`.
+@test "provider_list keeps columns aligned when InstanceType/LaunchTime are absent" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    set_response 0 '{"Reservations":[{"Instances":[
+      {"InstanceId":"i-aaa","PublicIpAddress":"5.6.7.8","State":{"Name":"running"},
+       "Tags":[{"Key":"Name","Value":"sandbox-x"},{"Key":"Project","Value":"claude-sandbox"}]}
+    ]}]}'
+    run provider_list
+    [ "$status" -eq 0 ]
+    row="$(printf '%s' "$output" | head -1)"
+    # handle name state type market epoch ip cidr ash disk
+    [ "$(printf '%s' "$row" | awk -F'\t' '{print NF}')" -eq 10 ]
+    [ "$(printf '%s' "$row" | awk -F'\t' '{print $7}')" = "5.6.7.8" ]
+    [ "$(printf '%s' "$row" | awk -F'\t' '{print $5}')" = "on-demand" ]
+}
+
+# provider_cleanup_net used to run `delete-security-group ... 2>/dev/null` and
+# log only on success. That silently swallowed UnauthorizedOperation, so a
+# too-narrow IAM policy leaked a security group on every `down` — invisibly,
+# until the orphan blocked `up --name <same>` with InvalidGroup.Duplicate.
+_fake_aws() { printf '#!/usr/bin/env bash\n%s\n' "$1" > "$AWS_CMD_FAKE"; chmod +x "$AWS_CMD_FAKE"; AWS_CMD="$AWS_CMD_FAKE"; }
+
+@test "provider_cleanup_net warns when the SG delete is unauthorized" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    AWS_CMD_FAKE="$BATS_TEST_TMPDIR/aws-fake"
+    _fake_aws 'echo "An error occurred (UnauthorizedOperation) when calling the DeleteSecurityGroup operation" >&2; exit 255'
+    run provider_cleanup_net box
+    [[ "$output" == *"could not delete SG box-sg"* ]]
+    [[ "$output" == *"UnauthorizedOperation"* ]]
+}
+
+@test "provider_cleanup_net stays quiet when the SG simply doesn't exist" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    AWS_CMD_FAKE="$BATS_TEST_TMPDIR/aws-fake"
+    _fake_aws 'echo "An error occurred (InvalidGroup.NotFound) ..." >&2; exit 255'
+    run provider_cleanup_net box
+    [ -z "$output" ]
+}
+
+@test "provider_cleanup_net explains a DependencyViolation instead of hiding it" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    AWS_CMD_FAKE="$BATS_TEST_TMPDIR/aws-fake"
+    _fake_aws 'echo "An error occurred (DependencyViolation) ..." >&2; exit 255'
+    run provider_cleanup_net box
+    [[ "$output" == *"still attached"* ]]
+    [[ "$output" == *"delete-security-group --group-name box-sg"* ]]
+}

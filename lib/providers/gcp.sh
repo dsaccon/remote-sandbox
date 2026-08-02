@@ -345,10 +345,16 @@ provider_terminate_ids() {   # NAME...
 }
 
 provider_cleanup_net() {     # NAME...
-    local n
+    local n err
     for n in "$@"; do
-        if _gcloud compute firewall-rules delete "${n}-fw" --quiet 2>/dev/null; then
+        if err="$(_gcloud compute firewall-rules delete "${n}-fw" --quiet 2>&1 >/dev/null)"; then
             log_info "deleted firewall ${n}-fw"
+        elif [[ "$err" == *"was not found"* || "$err" == *"404"* ]]; then
+            : # no per-sandbox rule to delete
+        else
+            # Same reasoning as the AWS driver: a permissions failure here leaks
+            # a firewall rule silently, and the name stays taken.
+            log_warn "could not delete firewall ${n}-fw: $err"
         fi
     done
 }
