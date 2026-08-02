@@ -58,3 +58,26 @@ set_response() {
     grep -q -- 'ec2 authorize-security-group-ingress' "$AWS_STUB_LOG"
     grep -q -- '1.2.3.4/32' "$AWS_STUB_LOG"
 }
+
+# Regression: the normalized record is consumed with `read -r` under
+# IFS=$'\t', and tab is an IFS-whitespace character, so a run of tabs collapses
+# into ONE separator. Every field in the jq array therefore emits a "-"
+# placeholder rather than an empty string — except .InstanceType and
+# .LaunchTime, which didn't. An instance missing both produced two adjacent
+# empty fields, collapsing the row and shifting every later column left by two:
+# `type` received the IP, `cidr` received the market, and `ip` received "-".
+# That is why `ssh <name>` resolved to `ubuntu@on-demand`.
+@test "provider_list keeps columns aligned when InstanceType/LaunchTime are absent" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    set_response 0 '{"Reservations":[{"Instances":[
+      {"InstanceId":"i-aaa","PublicIpAddress":"5.6.7.8","State":{"Name":"running"},
+       "Tags":[{"Key":"Name","Value":"sandbox-x"},{"Key":"Project","Value":"claude-sandbox"}]}
+    ]}]}'
+    run provider_list
+    [ "$status" -eq 0 ]
+    row="$(printf '%s' "$output" | head -1)"
+    # handle name state type market epoch ip cidr ash disk
+    [ "$(printf '%s' "$row" | awk -F'\t' '{print NF}')" -eq 10 ]
+    [ "$(printf '%s' "$row" | awk -F'\t' '{print $7}')" = "5.6.7.8" ]
+    [ "$(printf '%s' "$row" | awk -F'\t' '{print $5}')" = "on-demand" ]
+}
