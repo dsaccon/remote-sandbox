@@ -402,9 +402,13 @@ dev loop:
 # On your laptop: spin up a working sandbox (one-time per dev session).
 ./bin/sandbox up --name dev
 
-# After every edit, sync the repo over and run checks inside the box:
-rsync -av --exclude-from=.gitignore --exclude='.git/' ./ \
-    "$(./bin/sandbox list | awk '/^dev /{print $NF}')":~/remote-sandbox/
+# After every edit, sync the repo over and run checks inside the box.
+# IP is column 9 of `list`; the user and key are the ones `sandbox ssh` uses
+# (SSH_USER, and SSH_KEY_FILE — which config_load defaults to
+# ~/.ssh/<SSH_KEY_NAME>.pem when ./config leaves it empty).
+DEV_IP="$(./bin/sandbox list | awk '$2 == "dev" {print $9}')"
+rsync -av -e "ssh -i ~/.ssh/claude-sandbox.pem -o IdentitiesOnly=yes" \
+    --exclude-from=.gitignore --exclude='.git/' ./ "ubuntu@$DEV_IP:~/remote-sandbox/"
 
 ./bin/sandbox ssh dev
 # inside the sandbox:

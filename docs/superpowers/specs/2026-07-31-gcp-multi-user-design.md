@@ -27,6 +27,18 @@ The first draft derived identity from a service-account key JSON at
 
 Identity now comes from gcloud's **active account**.
 
+## Correction (2026-08-01, during implementation)
+
+The draft claimed `provider_resolve_ip` was a live bypass — that without an
+ownership check there, `ssh <colleague-box>` would reach a foreign box by name.
+That was wrong: **`provider_resolve_ip` has no callers.** `ssh` and `scp` use
+`mc_resolve_ip` → `mc_find` → `provider_list_all` → `provider_list`, which the
+owner filter already scopes. It has been unused since the cross-cloud refactor
+in `e594762`; only the driver contract keeps it alive.
+
+The check was implemented anyway as defence in depth and is covered by tests,
+but the protection for `ssh`/`scp` comes from the list filter, not from it.
+
 ## Scope
 
 **In:** owner identity derived from gcloud's active account; `list`, `ssh`,
@@ -117,17 +129,19 @@ already exist.
 
 Server-side. The jq pipeline is untouched.
 
-**Resolve** (`provider_resolve_ip`, `gcp.sh:305`) — this calls
-`instances describe <name>` directly and so **bypasses the list filter**. It
-must check `labels.owner` against the caller and `die` with the existing
-"no sandbox named X" message when it doesn't match. Without this, `ssh
-<colleague-box>` reaches a foreign box by name; it would fail on the SSH key,
-but should fail cleanly at the CLI instead.
+**Resolve** (`provider_resolve_ip`, `gcp.sh:305`) — checks `labels.owner`
+against the caller and `die`s with the existing "no sandbox named X" message
+when it doesn't match, since `instances describe <name>` doesn't go through the
+list filter.
 
-**Destructive paths need no changes.** `down <name>`, `--all` and `--stale`
-route through `mc_find` / `provider_list_all` (`lib/multicloud.sh:38`), which
-consume `provider_list`. Scoping the filter scopes the blast radius. That is
-the whole safety property, and it falls out of one string.
+This is **defence in depth, not a live hole** — see the correction below. It
+guards the driver contract in case something calls it later.
+
+**Every user-facing path is covered by the list filter alone.** `ssh` and `scp`
+resolve through `mc_resolve_ip` → `mc_find`, and `down <name>` / `--all` /
+`--stale` through `mc_find` / `provider_list_all` (`lib/multicloud.sh:38`) —
+all of which consume `provider_list`. Scoping that one filter scopes the blast
+radius. That is the whole safety property, and it falls out of one string.
 
 ### Completion
 
@@ -202,7 +216,9 @@ touching the real `~/.config/gcloud`.
   sanitization of dots and `@`; over-63-char `die`; memoization.
 - Launch: `owner` label applied; metadata holds the unmodified email.
 - List: filter string carries `labels.owner`.
-- Resolve: foreign box rejected by `ssh` and `scp`.
+- Resolve: `provider_resolve_ip` rejects a foreign box and an unlabelled one,
+  and still reports "booting" for a box you own. (Asserted directly on the
+  driver — `ssh`/`scp` don't call it; they are covered by the list filter.)
 - Down: `--all` and `--stale` exclude foreign boxes.
 - Completion: `_sandbox_names_gcp` filter carries owner.
 - Images: labels + description written at bake; `list-images` unfiltered and
