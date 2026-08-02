@@ -1,11 +1,24 @@
 #!/usr/bin/env bats
 # test/unit/gcp.bats — GCP driver skeleton: seam, preflight, name validation.
 
+# The fixture account, and the GCP label sandbox_owner_label derives from it.
+TEST_OWNER_EMAIL="tester@example.com"
+TEST_OWNER_LABEL="tester-example-com"
+
 setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     export GCLOUD_STUB_LOG="$BATS_TEST_TMPDIR/gcloud.log"; : > "$GCLOUD_STUB_LOG"
     export GCLOUD_STUB_RESPONSE="$BATS_TEST_TMPDIR/gcloud-resp"
     export GCLOUD_CMD="$REPO_ROOT/test/unit/stubs/gcloud-empty"
+    # Deterministic identity for every test: sandboxes are owner-scoped, so the
+    # driver resolves the active gcloud account. Point it at a fixture, never at
+    # the developer's real ~/.config/gcloud — and never at the gcloud stub,
+    # whose canned response is instance JSON, not an email.
+    export CLOUDSDK_CONFIG="$BATS_TEST_TMPDIR/gcloudcfg"
+    mkdir -p "$CLOUDSDK_CONFIG/configurations"
+    unset CLOUDSDK_ACTIVE_CONFIG_NAME
+    printf '[core]\naccount = %s\n' "$TEST_OWNER_EMAIL" \
+        > "$CLOUDSDK_CONFIG/configurations/config_default"
     source "$REPO_ROOT/lib/providers/gcp.sh"
     GCP_PROJECT="proj"; GCP_ZONE="us-west1-b"; GCP_MACHINE_TYPE="e2-standard-4"; SSH_USER="ubuntu"
 }
@@ -26,10 +39,12 @@ set_response() { local rc="$1"; shift; { echo "$rc"; printf '%s' "$*"; } > "$GCL
     [ "$status" -ne 0 ]
     [[ "$output" == *"GCP_PROJECT"* ]]
 }
-@test "provider_build_image is unsupported on gcp" {
+@test "provider_build_image delegates to the gcp baker" {
     run provider_build_image
+    # setup() leaves SSH_KEY_FILE unset, so _gcp_build_image must fail loudly on
+    # the missing prerequisite rather than silently proceeding.
     [ "$status" -ne 0 ]
-    [[ "$output" == *"not yet supported"* ]]
+    [[ "$output" == *"build-ami"* ]]
 }
 
 # Regression: gcp_render_startup must return 0 even with an empty repo. A
@@ -49,6 +64,7 @@ set_response() { local rc="$1"; shift; { echo "$rc"; printf '%s' "$*"; } > "$GCL
     run env REPO_ROOT="$REPO_ROOT" \
             GCLOUD_CMD="$GCLOUD_CMD" GCLOUD_STUB_LOG="$GCLOUD_STUB_LOG" \
             GCLOUD_STUB_RESPONSE="$GCLOUD_STUB_RESPONSE" \
+            CLOUDSDK_CONFIG="$CLOUDSDK_CONFIG" \
             GCP_PROJECT=proj GCP_ZONE=us-west1-b GCP_MACHINE_TYPE=e2-standard-4 \
             SSH_USER=ubuntu \
             GCP_SSH_PUBKEY="$BATS_TEST_TMPDIR/id.pub" AUTO_SHUTDOWN_HOURS=0 \
@@ -125,18 +141,18 @@ EOF
 }
 
 @test "provider_resolve_ip returns the natIP for a RUNNING box" {
-    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+    cat > "$GCLOUD_STUB_RESPONSE" <<EOF
 0
-{"status":"RUNNING","networkInterfaces":[{"accessConfigs":[{"natIP":"5.6.7.8"}]}]}
+{"status":"RUNNING","labels":{"owner":"$TEST_OWNER_LABEL"},"networkInterfaces":[{"accessConfigs":[{"natIP":"5.6.7.8"}]}]}
 EOF
     run provider_resolve_ip sandbox-abc
     [ "$status" -eq 0 ]
     [ "$output" = "5.6.7.8" ]
 }
 @test "provider_resolve_ip dies for a booting box" {
-    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+    cat > "$GCLOUD_STUB_RESPONSE" <<EOF
 0
-{"status":"PROVISIONING","networkInterfaces":[{"accessConfigs":[{}]}]}
+{"status":"PROVISIONING","labels":{"owner":"$TEST_OWNER_LABEL"},"networkInterfaces":[{"accessConfigs":[{}]}]}
 EOF
     run provider_resolve_ip sandbox-abc
     [ "$status" -ne 0 ]
@@ -148,4 +164,49 @@ EOF
     [ "$status" -eq 0 ]
     grep -q -- 'compute instances delete sandbox-abc' "$GCLOUD_STUB_LOG"
     grep -q -- 'zone=us-west1-b' "$GCLOUD_STUB_LOG"
+}
+
+
+# --- Multi-user: sandboxes are scoped to the gcloud account that made them. ---
+# Identity comes from the CLOUDSDK_CONFIG fixture written in setup(), so these
+# assert against $TEST_OWNER_LABEL rather than hardcoding an address.
+
+@test "provider_launch labels the instance with the owner" {
+    set_response 0 ''
+    GCP_SSH_PUBKEY="$BATS_TEST_TMPDIR/id.pub"; echo "ssh-ed25519 AAAA test" > "$GCP_SSH_PUBKEY"
+    AUTO_SHUTDOWN_HOURS=0
+    run provider_launch sandbox-abc "" false "1.2.3.4/32"
+    [ "$status" -eq 0 ]
+    grep -q -- "labels=project=claude-sandbox,name=sandbox-abc,owner=$TEST_OWNER_LABEL" \
+        "$GCLOUD_STUB_LOG"
+    # Metadata carries the unmodified address for audit, not the label form.
+    grep -q -- "owner=$TEST_OWNER_EMAIL" "$GCLOUD_STUB_LOG"
+}
+
+@test "provider_list filters instances by owner label" {
+    set_response 0 '[]'
+    run provider_list
+    [ "$status" -eq 0 ]
+    grep -q -- "labels.owner=$TEST_OWNER_LABEL" "$GCLOUD_STUB_LOG"
+    grep -q -- "labels.project=claude-sandbox" "$GCLOUD_STUB_LOG"
+}
+
+@test "provider_resolve_ip rejects a box owned by someone else" {
+    cat > "$GCLOUD_STUB_RESPONSE" <<RESP
+0
+{"status":"RUNNING","labels":{"owner":"someone-else-corp-com"},"networkInterfaces":[{"accessConfigs":[{"natIP":"5.6.7.8"}]}]}
+RESP
+    run provider_resolve_ip sandbox-theirs
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no sandbox named sandbox-theirs"* ]]
+}
+
+@test "provider_resolve_ip rejects a box with no owner label" {
+    cat > "$GCLOUD_STUB_RESPONSE" <<'RESP'
+0
+{"status":"RUNNING","labels":{"project":"claude-sandbox"},"networkInterfaces":[{"accessConfigs":[{"natIP":"5.6.7.8"}]}]}
+RESP
+    run provider_resolve_ip sandbox-legacy
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no sandbox named sandbox-legacy"* ]]
 }

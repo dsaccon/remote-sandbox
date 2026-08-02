@@ -4,7 +4,7 @@ setup() {
     REPO_ROOT="$(cd "$BATS_TEST_DIRNAME/../.." && pwd)"
     export SANDBOX_REPO_ROOT="$(mktemp -d)"
     mkdir -p "$SANDBOX_REPO_ROOT/lib/providers" "$SANDBOX_REPO_ROOT/bin"
-    cp "$REPO_ROOT"/lib/{log,config,common,provider,multicloud,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
+    cp "$REPO_ROOT"/lib/{log,identity,config,common,provider,multicloud,aws,provision}.sh "$SANDBOX_REPO_ROOT/lib/"
     cp "$REPO_ROOT"/lib/providers/{aws,gcp}.sh "$SANDBOX_REPO_ROOT/lib/providers/"
     cp "$REPO_ROOT/bin/sandbox-list" "$SANDBOX_REPO_ROOT/bin/"
     cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
@@ -19,6 +19,13 @@ EOF
     export GCLOUD_STUB_LOG="$BATS_TEST_TMPDIR/gcloud.log"; : > "$GCLOUD_STUB_LOG"
     export GCLOUD_STUB_RESPONSE="$BATS_TEST_TMPDIR/gcloud-resp"
     export GCLOUD_CMD="$REPO_ROOT/test/unit/stubs/gcloud-empty"
+    # Deterministic owner identity: the gcp driver scopes sandboxes to the
+    # active gcloud account. Point it at a fixture, never the real
+    # ~/.config/gcloud, and never the gcloud stub (its canned response is
+    # instance JSON, which would sanitize to a >63-char label and die).
+    export CLOUDSDK_CONFIG="$BATS_TEST_TMPDIR/gcloudcfg"
+    mkdir -p "$CLOUDSDK_CONFIG/configurations"
+    printf '[core]\naccount = tester@example.com\n' > "$CLOUDSDK_CONFIG/configurations/config_default"
 }
 
 teardown() { rm -rf "$SANDBOX_REPO_ROOT"; }
