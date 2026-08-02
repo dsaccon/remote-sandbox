@@ -26,10 +26,12 @@ set_response() { local rc="$1"; shift; { echo "$rc"; printf '%s' "$*"; } > "$GCL
     [ "$status" -ne 0 ]
     [[ "$output" == *"GCP_PROJECT"* ]]
 }
-@test "provider_build_image is unsupported on gcp" {
+@test "provider_build_image delegates to the gcp baker" {
     run provider_build_image
+    # setup() leaves SSH_KEY_FILE unset, so _gcp_build_image must fail loudly on
+    # the missing prerequisite rather than silently proceeding.
     [ "$status" -ne 0 ]
-    [[ "$output" == *"not yet supported"* ]]
+    [[ "$output" == *"build-ami"* ]]
 }
 
 # Regression: gcp_render_startup must return 0 even with an empty repo. A
