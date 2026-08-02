@@ -5,7 +5,14 @@ if [[ -n "${_SANDBOX_PROVIDER_AWS_LOADED:-}" ]]; then return 0; fi
 _SANDBOX_PROVIDER_AWS_LOADED=1
 _paws_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # provision.sh transitively sources log.sh, common.sh (Task 2), and aws.sh.
-# shellcheck source=../provision.sh
+# Deliberately NOT followed by shellcheck (source=/dev/null). provision.sh
+# carries `# shellcheck source=aws.sh`, and with source-path=SCRIPTDIR that
+# resolves relative to the file being checked — so entering from here it points
+# back at lib/providers/aws.sh, not lib/aws.sh. The two share a basename, and
+# the resulting cycle expands until shellcheck is OOM-killed. provision.sh is
+# linted directly (and follows lib/aws.sh correctly from there), so nothing is
+# actually unchecked.
+# shellcheck source=/dev/null
 source "$_paws_dir/../provision.sh"
 
 # ---- provider contract (AWS) ----
