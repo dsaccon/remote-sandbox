@@ -86,6 +86,9 @@ mc_find() {
 mc_resolve_ip() {
     local match provider handle name state type market epoch ip cidr ash disk
     match="$(mc_find "$1" "${2:-}")" || return 1
+    # provider/handle/type/... are positional placeholders; this function only
+    # acts on `state`, `name` and `ip`, but the field order is fixed.
+    # shellcheck disable=SC2034
     IFS=$'\t' read -r provider handle name state type market epoch ip cidr ash disk <<< "$match"
     # Refuse only states that clearly aren't reachable; a box that's up (ready /
     # running / still-initializing / impaired) is connectable as long as it has

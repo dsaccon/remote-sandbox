@@ -57,6 +57,9 @@ printf '%-9s %-22s %-14s %-18s %-6s %-10s %-10s %-8s %-16s %-18s\n' \
     PROVIDER NAME STATE TYPE DISK MARKET AGE EXPIRES IP ALLOWED
 
 now_epoch="$(date -u +%s)"
+# `handle` is a positional placeholder: the record's field order is fixed, so it
+# has to be read even though only the other columns are rendered.
+# shellcheck disable=SC2034
 printf '%s\n' "$rows" | while IFS=$'\t' read -r provider handle name state type market launch_epoch ip cidr shutdown_hours disk; do
     age_sec=$(( now_epoch - launch_epoch ))
     if (( age_sec < 3600 )); then

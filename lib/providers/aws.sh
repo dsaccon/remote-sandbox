@@ -94,12 +94,16 @@ _aws_build_image() {
     log_info "bake VM: $instance_id"
 
     # Cleanup-on-failure trap leaves the instance up so the user can debug.
+    # _bake_ip is the trap's own: assigning the function's $ip from here would
+    # clobber the value the rest of the bake is using. NOT local — the trap body
+    # runs after this function's locals are out of scope.
+    _bake_ip=""
     cleanup_on_failure=1
     trap '
         if [[ $cleanup_on_failure -eq 1 ]]; then
             log_warn "bake failed; leaving $instance_id running for debugging."
-            ip="$(aws_get_instance_ip "$instance_id" 2>/dev/null || echo "?")"
-            echo "  Debug:  ssh ${SSH_USER}@${ip}"
+            _bake_ip="$(aws_get_instance_ip "$instance_id" 2>/dev/null || echo "?")"
+            echo "  Debug:  ssh ${SSH_USER}@${_bake_ip}"
             echo "  Tear down when done:  ./bin/sandbox down $instance_id"
         fi' EXIT
 

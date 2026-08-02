@@ -52,6 +52,9 @@ config_load
 sel=""
 for q in "${args[@]}"; do
     match="$(mc_find_image "$q" "$scope")"
+    # epoch/size/in_use are positional placeholders — the record's field order is
+    # fixed, so they must be read to reach `current`, which is what we act on.
+    # shellcheck disable=SC2034
     IFS=$'\t' read -r provider id name epoch size current in_use <<< "$match"
     if [[ "$current" == "1" && "$force" -ne 1 ]]; then
         die "refusing to delete '$q' — it's the current $provider image in ./config (use --force to override)"
