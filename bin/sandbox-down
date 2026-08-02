@@ -109,7 +109,12 @@ case "$mode" in
         state="$(printf '%s' "$sel" | awk -F'\t' '{print $4}')"
         case "$state" in
             shutting-down|terminated)
-                log_info "$target is already $state — nothing to do"; exit 0 ;;
+                # The instance is gone, but its per-sandbox SG / firewall rule is
+                # not — clouds keep those after termination, and an orphan blocks
+                # `up --name <same>`. Nothing to terminate, but plenty to clean up.
+                log_info "$target is already $state — releasing its network resources"
+                printf '%s\n' "$sel" | awk -F'\t' '{print $1"\t"$3}' | mc_cleanup_net
+                exit 0 ;;
         esac
         log_info "terminating $target — track via './bin/sandbox list'"
         ;;

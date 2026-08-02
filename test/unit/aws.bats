@@ -81,3 +81,35 @@ set_response() {
     [ "$(printf '%s' "$row" | awk -F'\t' '{print $7}')" = "5.6.7.8" ]
     [ "$(printf '%s' "$row" | awk -F'\t' '{print $5}')" = "on-demand" ]
 }
+
+# provider_cleanup_net used to run `delete-security-group ... 2>/dev/null` and
+# log only on success. That silently swallowed UnauthorizedOperation, so a
+# too-narrow IAM policy leaked a security group on every `down` — invisibly,
+# until the orphan blocked `up --name <same>` with InvalidGroup.Duplicate.
+_fake_aws() { printf '#!/usr/bin/env bash\n%s\n' "$1" > "$AWS_CMD_FAKE"; chmod +x "$AWS_CMD_FAKE"; AWS_CMD="$AWS_CMD_FAKE"; }
+
+@test "provider_cleanup_net warns when the SG delete is unauthorized" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    AWS_CMD_FAKE="$BATS_TEST_TMPDIR/aws-fake"
+    _fake_aws 'echo "An error occurred (UnauthorizedOperation) when calling the DeleteSecurityGroup operation" >&2; exit 255'
+    run provider_cleanup_net box
+    [[ "$output" == *"could not delete SG box-sg"* ]]
+    [[ "$output" == *"UnauthorizedOperation"* ]]
+}
+
+@test "provider_cleanup_net stays quiet when the SG simply doesn't exist" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    AWS_CMD_FAKE="$BATS_TEST_TMPDIR/aws-fake"
+    _fake_aws 'echo "An error occurred (InvalidGroup.NotFound) ..." >&2; exit 255'
+    run provider_cleanup_net box
+    [ -z "$output" ]
+}
+
+@test "provider_cleanup_net explains a DependencyViolation instead of hiding it" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    AWS_CMD_FAKE="$BATS_TEST_TMPDIR/aws-fake"
+    _fake_aws 'echo "An error occurred (DependencyViolation) ..." >&2; exit 255'
+    run provider_cleanup_net box
+    [[ "$output" == *"still attached"* ]]
+    [[ "$output" == *"delete-security-group --group-name box-sg"* ]]
+}

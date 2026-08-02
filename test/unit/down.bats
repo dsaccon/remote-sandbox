@@ -101,3 +101,25 @@ EOF
     grep -q -- 'terminate-instances' "$AWS_STUB_LOG"
     grep -q -- 'instances delete sandbox-gcp' "$GCLOUD_STUB_LOG"
 }
+
+# Regression: `down` on an already-terminated box used to log "nothing to do"
+# and exit before any cleanup ran. The instance is gone, but AWS keeps its
+# security group — so a box that died on its own (spot preemption, auto-
+# shutdown) orphaned its SG permanently, and `up --name <same>` then failed
+# with InvalidGroup.Duplicate forever.
+@test "down on an already-terminated box still releases its security group" {
+    cat > "$AWS_STUB_RESPONSE" <<'EOF2'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-dead","InstanceType":"m7i-flex.xlarge","LaunchTime":"2026-08-01T00:00:00.000Z",
+   "State":{"Name":"terminated"},
+   "Tags":[{"Key":"Name","Value":"dev"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF2
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-down" dev
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"releasing its network resources"* ]]
+    grep -q -- 'delete-security-group --group-name dev-sg' "$AWS_STUB_LOG"
+    # Nothing to terminate — the instance is already gone.
+    ! grep -q -- 'terminate-instances' "$AWS_STUB_LOG"
+}

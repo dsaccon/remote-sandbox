@@ -97,6 +97,33 @@ mc_resolve_ip() {
 # mc_terminate — read "provider<TAB>handle<TAB>name" rows on stdin; group by
 # provider and terminate + clean up per cloud (each in a subshell with that
 # driver loaded). Logs a one-line summary per cloud.
+# mc_cleanup_net — read "provider<TAB>name" rows on stdin and delete each box's
+# per-sandbox network resources (AWS SG / GCP firewall rule) via its cloud's
+# driver, without touching instances. Used by `down` on a box that is already
+# gone: the instance is terminated, but AWS keeps its security group, and an
+# orphaned one blocks `up --name <same>` with InvalidGroup.Duplicate forever.
+mc_cleanup_net() {
+    local input; input="$(cat)"
+    [[ -z "$input" ]] && return 0
+    local prov
+    for prov in $_MC_CLOUDS; do
+        local names=() p n
+        while IFS=$'\t' read -r p n; do
+            [[ "$p" == "$prov" ]] || continue
+            [[ -z "$n" ]] && continue
+            names+=("$n")
+        done <<< "$input"
+        [[ ${#names[@]} -eq 0 ]] && continue
+        (
+            set +e
+            CLOUD="$prov"
+            provider_load 2>/dev/null || exit 0
+            provider_cleanup_net "${names[@]}"
+            exit 0
+        )
+    done
+}
+
 mc_terminate() {
     local input; input="$(cat)"
     [[ -z "$input" ]] && return 0

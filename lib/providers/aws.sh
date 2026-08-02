@@ -175,10 +175,20 @@ provider_terminate_ids() {
 # expected: legacy sandboxes share the old SG (no -sg variant exists) and
 # freshly-terminated instances still hold the SG via their ENI for ~60s.
 provider_cleanup_net() {
-    local n
+    local n err
     for n in "$@"; do
-        if _aws ec2 delete-security-group --group-name "${n}-sg" 2>/dev/null; then
+        if err="$(_aws ec2 delete-security-group --group-name "${n}-sg" 2>&1 >/dev/null)"; then
             log_info "deleted SG ${n}-sg"
+        elif [[ "$err" == *"InvalidGroup.NotFound"* ]]; then
+            : # legacy sandbox sharing the old shared SG — no per-sandbox SG exists
+        elif [[ "$err" == *"DependencyViolation"* ]]; then
+            log_warn "SG ${n}-sg is still attached; its ENI releases it ~60s after termination. Delete it later with:"
+            log_warn "    aws ec2 delete-security-group --group-name ${n}-sg"
+        else
+            # Anything else is NOT expected — most importantly UnauthorizedOperation,
+            # which silently leaked a security group on every `down` and eventually
+            # blocks `up --name <same>` with InvalidGroup.Duplicate.
+            log_warn "could not delete SG ${n}-sg: $err"
         fi
     done
 }
