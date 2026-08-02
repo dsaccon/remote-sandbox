@@ -82,11 +82,27 @@ _sandbox_names_aws() {
         --output text 2>/dev/null \
         | awk '$2 == "None" { print $1 }'
 }
+# _sandbox_owner_label — the caller's GCP owner label, or empty. Runs in a
+# SUBSHELL on purpose: lib/identity.sh dies via `exit 1` when gcloud isn't
+# authenticated, and completion runs in the user's INTERACTIVE shell, where a
+# bare exit would close their terminal.
+_sandbox_owner_label() {
+    local root
+    root="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)"
+    [[ -r "$root/lib/identity.sh" ]] || return 0
+    ( source "$root/lib/identity.sh" && sandbox_owner_label ) 2>/dev/null
+}
+
 _sandbox_names_gcp() {
     local proj; proj="$(_sandbox_cfg GCP_PROJECT)"
     [[ -z "$proj" ]] && return 0
+    # Suggesting nothing when identity can't be resolved is deliberate: offering
+    # names that `ssh` will then reject is worse than offering none.
+    local owner; owner="$(_sandbox_owner_label)"
+    [[ -z "$owner" ]] && return 0
     gcloud compute instances list --project "$proj" \
-        --filter="labels.project=claude-sandbox" --format="value(name)" 2>/dev/null
+        --filter="labels.project=claude-sandbox AND labels.owner=$owner" \
+        --format="value(name)" 2>/dev/null
 }
 
 # _sandbox_list_images — delete-image identifiers across BOTH clouds (AWS AMI
