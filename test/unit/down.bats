@@ -123,3 +123,26 @@ EOF2
     # Nothing to terminate — the instance is already gone.
     ! grep -q -- 'terminate-instances' "$AWS_STUB_LOG"
 }
+
+# Regression: AWS keeps listing a terminated instance for ~1h, so reusing its
+# name made every lookup ambiguous — `ssh`/`down <name>` died with a misleading
+# "exists in more than one cloud (aws aws)", and there was no way to address the
+# new box by name at all. mc_find now prefers boxes that still exist.
+@test "down by name targets the live box, not a terminated namesake" {
+    cat > "$AWS_STUB_RESPONSE" <<'EOF2'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-dead","InstanceType":"m7i-flex.xlarge","LaunchTime":"2026-08-01T00:00:00.000Z",
+   "State":{"Name":"terminated"},
+   "Tags":[{"Key":"Name","Value":"dev"},{"Key":"Project","Value":"claude-sandbox"}]},
+  {"InstanceId":"i-live","InstanceType":"m7i-flex.xlarge","LaunchTime":"2026-08-02T00:00:00.000Z",
+   "PublicIpAddress":"44.0.0.1","State":{"Name":"running"},
+   "Tags":[{"Key":"Name","Value":"dev"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF2
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-down" dev
+    [ "$status" -eq 0 ]
+    grep -q -- 'terminate-instances --instance-ids i-live' "$AWS_STUB_LOG"
+    ! grep -q -- 'terminate-instances --instance-ids i-dead' "$AWS_STUB_LOG"
+    [[ "$output" != *"more than one cloud"* ]]
+}

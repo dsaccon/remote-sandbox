@@ -52,20 +52,31 @@ provider_list_all() {
     return 0
 }
 
-# mc_find NAME [SCOPE] — print the single matching record (10-field row) for the
-# box whose name OR handle == NAME across the in-scope clouds. die on no match or
-# on an ambiguous match (same name in >1 cloud). Used by ssh/scp/down.
+# mc_find NAME [SCOPE] — print the single matching record (11-field row) for the
+# box whose name OR handle == NAME across the in-scope clouds. die on no match,
+# or on an ambiguous one. Used by ssh/scp/down.
 mc_find() {
-    local name="$1" scope="${2:-}" rows match count provs
+    local name="$1" scope="${2:-}" rows match live count clouds ncloud
     rows="$(provider_list_all "$scope")"
     match="$(printf '%s\n' "$rows" | awk -F'\t' -v n="$name" '$3==n || $2==n')"
     if [[ -z "$match" ]]; then
         die "no sandbox named $name in ${scope:-aws or gcp} (try ./bin/sandbox list)"
     fi
+    # A terminated box keeps its name resolvable for as long as the cloud goes on
+    # listing it (~1h on AWS), so reusing a name would otherwise make every
+    # lookup ambiguous — you couldn't even `down` the new box by name. Prefer
+    # boxes that still exist; fall back to the dead ones only when that's all
+    # there is, which is the case `down` cleans up after.
+    live="$(printf '%s\n' "$match" | awk -F'\t' '$4 != "terminated" && $4 != "shutting-down"')"
+    [[ -n "$live" ]] && match="$live"
     count="$(printf '%s\n' "$match" | grep -c .)"
     if [[ "$count" -gt 1 ]]; then
-        provs="$(printf '%s\n' "$match" | awk -F'\t' '{print $1}' | tr '\n' ' ')"
-        die "sandbox $name exists in more than one cloud (${provs% }) — pick one with --cloud"
+        clouds="$(printf '%s\n' "$match" | awk -F'\t' '{print $1}' | sort -u | tr '\n' ' ')"
+        ncloud="$(printf '%s\n' "$match" | awk -F'\t' '{print $1}' | sort -u | grep -c .)"
+        if [[ "$ncloud" -gt 1 ]]; then
+            die "sandbox $name exists in more than one cloud (${clouds% }) — pick one with --cloud"
+        fi
+        die "$count live sandboxes are named $name in ${clouds% } — address one by its instance id instead"
     fi
     printf '%s' "$match"
 }
