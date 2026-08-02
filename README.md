@@ -152,34 +152,60 @@ AMI-equivalent baking yet (see below).
 
 Prerequisites:
 
-- `gcloud` CLI installed (`brew install --cask gcloud-cli`) and authenticated
-  for your project. No extra `gcloud components` are needed.
-- A GCP project (its ID goes in `GCP_PROJECT` below).
-- A service account with permission to create/delete both instances and
-  firewall rules. `up` creates a per-sandbox firewall rule (and `down`
-  deletes it), so instance permissions alone aren't enough. Least-privilege
-  is two predefined roles: `roles/compute.instanceAdmin.v1` (instances) plus
-  `roles/compute.securityAdmin` (firewall rules). Simpler but broader:
-  the single `roles/compute.admin` role covers both. Download the account's
-  key as JSON and keep it out of git: this repo already ignores
-  `*.key`/`*.pem`, so save it with one of those extensions (e.g.
-  `gcp-key.key`) even though the content is JSON — gcloud only cares about
-  the content, not the filename.
+- `gcloud` CLI installed (`brew install --cask gcloud-cli`). No extra
+  `gcloud components` are needed.
+- A GCP project, with the **Compute Engine API enabled**, whose id goes in
+  `GCP_PROJECT` below. `gcloud projects list` shows ids — note that the id is
+  often not the display name (`megacode` vs `megacode-123456`).
+- Permission to create and delete both instances *and* firewall rules. `up`
+  creates a per-sandbox firewall rule (and `down` deletes it), so instance
+  permissions alone aren't enough. Least-privilege is two predefined roles:
+  `roles/compute.instanceAdmin.v1` plus `roles/compute.securityAdmin`. Simpler
+  but broader: `roles/compute.admin` covers both.
 
-Setup, in addition to the steps above:
+Setup:
 
 ```bash
-# .env — point gcloud/ADC at the service account key.
-echo 'GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/gcp-key.key' >> .env
+# Authenticate as yourself. This is what the gcloud CLI actually uses.
+gcloud auth login
 
 # ./config
 CLOUD="gcp"
 GCP_PROJECT="your-project-id"
 ```
 
-`source ./init.sh` picks up `GOOGLE_APPLICATION_CREDENTIALS` from `.env` and
-exports it for `gcloud`, printing `init: GOOGLE_APPLICATION_CREDENTIALS set
-for gcloud` when the path exists.
+That's all this tool needs — there is **no service-account key to create and no
+`GOOGLE_APPLICATION_CREDENTIALS` to set**. That variable drives Application
+Default Credentials, which client libraries use; the `gcloud` CLI authenticates
+from its own credential store instead, and nothing in this repo reads the
+variable. (Earlier versions of this README said otherwise.)
+
+Two things worth doing for your own convenience, neither required:
+
+```bash
+# So YOUR manual gcloud commands don't need --project on every invocation.
+# The tool always passes --project "$GCP_PROJECT" itself, so this can't
+# retarget where sandboxes get created — it only shortens what you type.
+gcloud config set project your-project-id
+
+# Same idea for the zone, if you run `gcloud compute` commands by hand.
+gcloud config set compute/zone us-west1-b
+```
+
+**If a GCP command suddenly fails**, the likeliest cause is an expired
+credential — Workspace organizations can require periodic reauthentication.
+The tool's error mentions credentials and the project, but the real fix is
+usually:
+
+```bash
+gcloud auth login
+```
+
+To see the actual error behind a failed preflight, run the check by hand:
+
+```bash
+gcloud compute images list --project your-project-id --filter="name=nonexistent"
+```
 
 `up`, `list`, `ssh`, `scp`, `down`, `spot`, and `build-ami` all work the same
 as AWS. Two differences to know about:

@@ -44,12 +44,15 @@ set -a
 source "$_env_file"
 set +a
 
-# GCP: gcloud reads Application Default Credentials from this path. Users put
-# GOOGLE_APPLICATION_CREDENTIALS=/path/to/key.json in .env, which the export
-# block above already exported — this just confirms/validates it.
+# GOOGLE_APPLICATION_CREDENTIALS drives Application Default Credentials, which
+# CLIENT LIBRARIES use. The gcloud CLI — and therefore ./bin/sandbox — does NOT
+# read it; gcloud authenticates from its own credential store (`gcloud auth
+# login`). Nothing in this repo consumes the variable. It is re-exported here
+# only for other tooling in the same shell that may genuinely want ADC; setting
+# it does nothing for the sandbox CLI.
 if [[ -n "${GOOGLE_APPLICATION_CREDENTIALS:-}" && -f "${GOOGLE_APPLICATION_CREDENTIALS}" ]]; then
     export GOOGLE_APPLICATION_CREDENTIALS
-    echo "init: GOOGLE_APPLICATION_CREDENTIALS set for gcloud"
+    echo "init: GOOGLE_APPLICATION_CREDENTIALS exported (for client libraries; gcloud does not use it)"
 fi
 
 # Report what got loaded — names only, never values.
