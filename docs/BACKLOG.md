@@ -139,7 +139,14 @@ already handles the latter and should be kept.
 
 ## 4. `GOOGLE_APPLICATION_CREDENTIALS` is documented but never read
 
-**Status:** Idea (bug)
+**Status:** Shipped (docs corrected 2026-08-02)
+
+The README's "Using GCP" setup now documents `gcloud auth login`, states plainly
+that no service-account key is needed, and explains what the variable actually
+does. `init.sh`'s message no longer claims it is "for gcloud". The misleading
+`die` text in `lib/providers/gcp.sh:33` is **not** fixed — see below.
+
+Original report:
 
 `README.md:165-181` walks you through creating a service account and setting
 `GOOGLE_APPLICATION_CREDENTIALS` in `.env`, and `init.sh:47-53` prints
@@ -154,7 +161,25 @@ which the README never mentions.
 
 Fix: document `gcloud auth login`, and either drop the variable entirely or
 explain what it's genuinely for. Related: `.env.example` lists only the three
-AWS variables, so a fresh GCP setup gets no template at all.
+AWS variables, so a fresh GCP setup gets no template at all — that is now
+correct rather than a gap, since GCP needs nothing in `.env`.
+
+Still open, split out of this item:
+
+## 5. `provider_check_creds` reports a guess instead of the real error
+
+**Status:** Idea (bug)
+
+`lib/providers/gcp.sh:33` runs the preflight probe with `>/dev/null 2>&1` and,
+on any failure, dies with "set GOOGLE_APPLICATION_CREDENTIALS and GCP_PROJECT"
+— advice that is wrong (nothing reads that variable) and usually irrelevant.
+
+Observed causes it currently hides: an expired credential needing
+reauthentication (common in Workspace orgs), the Compute Engine API not being
+enabled, and a wrong project id. Each needs a different fix, and the message
+points at none of them.
+
+Fix: capture gcloud's stderr and surface it, rather than substituting a guess.
 
 ---
 
