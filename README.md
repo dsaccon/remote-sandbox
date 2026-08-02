@@ -195,6 +195,39 @@ as AWS. Two differences to know about:
   column), so your baked GCP images show up there alongside AWS AMIs — no need
   to drop to raw `gcloud`.
 
+### Sharing a GCP project with other people
+
+Sandboxes are scoped to the gcloud account that created them. `list`, `ssh`,
+`scp`, `down` and tab completion only ever see your own boxes, so a colleague's
+`down --all` cannot touch your work.
+
+Each person authenticates as themselves — there's nothing else to configure:
+
+```bash
+gcloud auth login
+```
+
+Your identity is gcloud's active account (`gcloud config get-value account`),
+recorded on each box as an `owner` label plus full-email metadata.
+
+Two things to know:
+
+- **This is a safety rail, not a security boundary.** The filtering happens in
+  this CLI. Anyone with `roles/compute.instanceAdmin.v1` on the project can
+  bypass it with raw `gcloud`. Cloud Audit Logs are the tamper-proof record of
+  who actually did what.
+- **There's no `--all-users` view, by design.** Boxes launched before this
+  feature — or by someone who has left — carry no matching `owner` label and are
+  invisible here. Manage them with raw `gcloud`, or adopt them:
+
+  ```bash
+  ME="$(gcloud config get-value account | tr -d '[:space:]' | sed 's/[^a-z0-9_-]/-/g')"
+  gcloud compute instances add-labels NAME --zone ZONE --labels="owner=$ME"
+  ```
+
+AWS boxes are **not** scoped yet, so a cross-cloud `list` shows GCP filtered and
+AWS unfiltered.
+
 ## Each new terminal
 
 `aws` CLI and `./bin/sandbox` both read credentials from environment variables.
