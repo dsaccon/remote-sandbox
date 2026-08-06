@@ -479,15 +479,20 @@ Typical sequence after `./bin/sandbox up`:
 
 ```bash
 $ ./bin/sandbox list
-NAME                   STATE          TYPE               MARKET     AGE   IP
-sandbox-26bdd2af       pending        m7i-flex.xlarge    spot       5s    -
+PROVIDER  NAME                   STATE          TYPE               DISK   MARKET     AGE        EXPIRES  IP               ALLOWED
+aws       sandbox-26bdd2af       pending        m7i-flex.xlarge    64G    spot       5s         off      -                0.0.0.0/0
 # ...20s later...
-sandbox-26bdd2af       initializing   m7i-flex.xlarge    spot       25s   54.218.x.x
+aws       sandbox-26bdd2af       initializing   m7i-flex.xlarge    64G    spot       25s        off      54.218.7.31      0.0.0.0/0
 # ...60s later...
-sandbox-26bdd2af       ready          m7i-flex.xlarge    spot       85s   54.218.x.x
+aws       sandbox-26bdd2af       ready          m7i-flex.xlarge    64G    spot       1m         off      54.218.7.31      0.0.0.0/0
 
 $ ./bin/sandbox ssh sandbox-26bdd2af
 ```
+
+AGE coarsens as it grows — `5s`, `45m`, `5h30m`, `15d21h` — so a box up for
+weeks reads `15d21h` rather than `381h49m`, while a box mid-boot still shows
+useful seconds. EXPIRES uses the same format, and shows `off` when
+`AUTO_SHUTDOWN_HOURS=0`.
 
 `./bin/sandbox ssh` against a non-`ready` instance now gives a useful error
 ("still booting", "stopped", etc.) instead of "no sandbox named X".

@@ -30,6 +30,86 @@ EOF
 
 teardown() { rm -rf "$SANDBOX_REPO_ROOT"; }
 
+# iso_ago SECONDS — an ISO8601 UTC timestamp that many seconds in the past, so
+# AGE assertions are anchored to the run's own clock rather than a fixed date.
+# BSD `date -r` first, GNU `date -d @` as the fallback (same idiom as
+# gcp_ts_to_epoch).
+iso_ago() {
+    local t=$(( $(date -u +%s) - $1 ))
+    date -u -r "$t" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+        || date -u -d "@$t" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# aws_response_launched_at ISO — one running instance named age-box, launched at
+# the given timestamp.
+aws_response_launched_at() {
+    cat > "$AWS_STUB_RESPONSE" <<EOF
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-age","InstanceType":"m7i-flex.xlarge","State":{"Name":"running"},
+   "LaunchTime":"$1",
+   "Tags":[{"Key":"Name","Value":"age-box"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF
+}
+
+@test "list renders an age past a day in days, not hundreds of hours" {
+    # 15d21h30m — the shape that used to print as "381h49m".
+    aws_response_launched_at "$(iso_ago 1373400)"
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep age-box | grep -q -w 15d21h
+}
+
+@test "list keeps hours+minutes for an age under a day" {
+    aws_response_launched_at "$(iso_ago 19830)"   # 5h30m30s
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep age-box | grep -q -w 5h30m
+}
+
+@test "list keeps bare minutes for an age under an hour" {
+    aws_response_launched_at "$(iso_ago 2730)"    # 45m30s
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep age-box | grep -q -w 45m
+}
+
+@test "list shows seconds for a freshly launched box" {
+    # A booting box is ~5-90s old; without a seconds tier this rendered "0m"
+    # for the whole of `up`. Allow a range so a slow run doesn't flake.
+    aws_response_launched_at "$(iso_ago 25)"
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep age-box | grep -qE '\b(2[5-9]|3[0-9])s\b'
+}
+
+@test "list does not render a negative age when the clock is skewed" {
+    # LaunchTime is cloud-supplied and now_epoch is local, so a fresh box can
+    # appear to launch in the future.
+    aws_response_launched_at "$(iso_ago -30)"
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep age-box | grep -q -w 0s
+    ! ( echo "$output" | grep age-box | grep -q -- '-[0-9]*s' )
+}
+
+@test "list renders a multi-day EXPIRES in days too" {
+    # 72h auto-shutdown on a box 1h old → 70h59m remaining → "2d22h".
+    cat > "$AWS_STUB_RESPONSE" <<EOF
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-age","InstanceType":"m7i-flex.xlarge","State":{"Name":"running"},
+   "LaunchTime":"$(iso_ago 3630)",
+   "Tags":[{"Key":"Name","Value":"age-box"},{"Key":"Project","Value":"claude-sandbox"},
+           {"Key":"AutoShutdownHours","Value":"72"}]}
+]}]}
+EOF
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    [ "$status" -eq 0 ]
+    echo "$output" | grep age-box | grep -q -w 2d22h
+}
+
 @test "list prints header and one row per instance" {
     cat > "$AWS_STUB_RESPONSE" <<'EOF'
 0
