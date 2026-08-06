@@ -23,7 +23,9 @@ TYPE, DISK, MARKET, AGE, EXPIRES, IP, ALLOWED.
   PROVIDER "aws" or "gcp" — which cloud the box lives in. A cloud whose
            credentials aren't configured is skipped silently.
   MARKET   "spot" for a spot/preemptible instance, else "on-demand".
-  EXPIRES  Time until the box auto-terminates. "off" if disabled, "-" if unknown.
+  AGE      Uptime, coarsening as it grows: "5s", "45m", "5h30m", "15d21h".
+  EXPIRES  Time until the box auto-terminates, same format as AGE. "off" if
+           disabled, "-" if unknown.
   ALLOWED  CIDR the sandbox's firewall/SG lets in on :22; "-" if none found.
 
   --active         Only show ready sandboxes.
@@ -56,17 +58,36 @@ fi
 printf '%-9s %-22s %-14s %-18s %-6s %-10s %-10s %-8s %-16s %-18s\n' \
     PROVIDER NAME STATE TYPE DISK MARKET AGE EXPIRES IP ALLOWED
 
+# fmt_duration SECONDS — render a duration, coarsening as it grows: "5s" under a
+# minute, "45m" under an hour, "5h30m" under a day, "15d21h" beyond. Minutes are
+# dropped past a day because at that scale they're noise, and "381h49m" is
+# unreadable as an age. The seconds tier matters for `up`: a box spends its first
+# ~90s booting, which would otherwise all render as a useless "0m".
+fmt_duration() {
+    local s="$1"
+    # Clamp negatives: AGE compares a local clock against a cloud-supplied launch
+    # time, so modest skew can put a fresh box a few seconds in the future.
+    # Explicit `if` rather than `(( ... )) && s=0`, which returns 1 when the
+    # test is false — a footgun under `set -e` (see lib/providers/gcp.sh:200).
+    if (( s < 0 )); then s=0; fi
+    if (( s < 60 )); then
+        printf '%ds' "$s"
+    elif (( s < 3600 )); then
+        printf '%dm' "$(( s / 60 ))"
+    elif (( s < 86400 )); then
+        printf '%dh%dm' "$(( s / 3600 ))" "$(( (s % 3600) / 60 ))"
+    else
+        printf '%dd%dh' "$(( s / 86400 ))" "$(( (s % 86400) / 3600 ))"
+    fi
+}
+
 now_epoch="$(date -u +%s)"
 # `handle` is a positional placeholder: the record's field order is fixed, so it
 # has to be read even though only the other columns are rendered.
 # shellcheck disable=SC2034
 printf '%s\n' "$rows" | while IFS=$'\t' read -r provider handle name state type market launch_epoch ip cidr shutdown_hours disk; do
     age_sec=$(( now_epoch - launch_epoch ))
-    if (( age_sec < 3600 )); then
-        age="$(( age_sec / 60 ))m"
-    else
-        age="$(( age_sec / 3600 ))h$(( (age_sec % 3600) / 60 ))m"
-    fi
+    age="$(fmt_duration "$age_sec")"
     if [[ "$only_active" -eq 1 && "$state" != "ready" ]]; then
         continue
     fi
@@ -80,10 +101,8 @@ printf '%s\n' "$rows" | while IFS=$'\t' read -r provider handle name state type 
             remaining_sec=$(( threshold_sec - age_sec ))
             if (( remaining_sec <= 0 )); then
                 expires="due"
-            elif (( remaining_sec < 3600 )); then
-                expires="$(( remaining_sec / 60 ))m"
             else
-                expires="$(( remaining_sec / 3600 ))h$(( (remaining_sec % 3600) / 60 ))m"
+                expires="$(fmt_duration "$remaining_sec")"
             fi
             ;;
     esac
