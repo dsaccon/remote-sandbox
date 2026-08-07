@@ -16,6 +16,13 @@ _paws_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$_paws_dir/../provision.sh"
 
 # ---- provider contract (AWS) ----
+# provider_configured — AWS is the default launch target and needs no per-cloud
+# config beyond credentials, so it always counts as configured. Deliberately
+# asymmetric with the gcp driver, which gates on GCP_PROJECT: a failure here is
+# worth reporting rather than skipping silently, because if you are using this
+# tool at all you are probably expecting AWS to work.
+provider_configured() { return 0; }
+
 provider_check_creds() { aws_caller_identity; }
 provider_preflight()   { preflight_or_die; }
 provider_launch()      { provision_launch "$1" "$2" "$3" "$4"; }   # -> instance id

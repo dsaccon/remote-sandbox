@@ -30,11 +30,27 @@ gcp_validate_name() {
         || die "invalid --name '$n' for gcp: must be RFC1035 (lowercase, digits, hyphens; start with a letter; <=63 chars)"
 }
 
+# provider_configured — has anyone actually set GCP up? GCP_PROJECT is the
+# marker: without it there is nothing to query, so callers skip this cloud
+# silently rather than reporting a failure. An AWS-only user should never see
+# gcp noise on every command.
+provider_configured() { [[ -n "${GCP_PROJECT:-}" ]]; }
+
 provider_check_creds() {
     command -v "$GCLOUD_CMD" >/dev/null 2>&1 || die "gcloud not on PATH — install the Google Cloud SDK"
     [[ -n "${GCP_PROJECT:-}" ]] || die "GCP_PROJECT not set in ./config"
-    if ! _gcloud compute images list --filter="name=nonexistent" >/dev/null 2>&1; then
-        die "gcloud auth/project check failed — set GOOGLE_APPLICATION_CREDENTIALS and GCP_PROJECT"
+    # Report what gcloud actually said instead of guessing. The old message
+    # named GOOGLE_APPLICATION_CREDENTIALS — which nothing in this repo reads —
+    # and buried the real cause. An expired credential ("Reauthentication
+    # required."), a disabled Compute API and a wrong project id each need a
+    # different fix, and only gcloud knows which one you have.
+    #
+    # --no-standard-images because the default fans this out across Google's
+    # public image projects (one request each) to fetch a catalogue we discard;
+    # --limit=1 because the answer we want is just "did the call work".
+    local err
+    if ! err="$(_gcloud compute images list --no-standard-images --limit=1 2>&1 >/dev/null)"; then
+        die "gcloud check failed for project '$GCP_PROJECT': ${err:-(no error output)}"
     fi
 }
 
