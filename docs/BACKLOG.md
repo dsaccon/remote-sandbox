@@ -114,14 +114,36 @@ would be the right primitive there, not Cloud Run *services*.
 
 ## 3. Make tab completion instant (serve cache, refresh in background)
 
-**Status:** Accepted
+**Status:** Idea — **premise disproved, needs re-measuring before anyone builds
+it.** Downgraded from Accepted 2026-08-06.
+
+> **The 2-3s figure below is wrong.** Measured on a dev machine: `gcloud
+> version` — that is, full SDK and Python startup with no network at all —
+> takes **0.59s**, not 2-3s. Whatever made Tab feel slow was not interpreter
+> startup.
+>
+> The one latency source actually measured during item 5's investigation was
+> environmental (broken IPv6 routing stalling every Google endpoint for ~76s per
+> call), which no amount of caching would have hidden — it would have served
+> stale names forever and never successfully refreshed.
+>
+> Anyone picking this up should first time a cold Tab on a *healthy* network. If
+> the real number is a few hundred milliseconds, this item is not worth its
+> complexity — stale-while-revalidate brings a cache-invalidation problem, a
+> refresh lock, and detached-process handling into a directory that currently
+> has **zero test coverage**.
+>
+> Note also that `_sandbox_cached` keys on the config file's *path*, not its
+> contents (`completion/sandbox.sh:50`), so switching `CLOUD` or `GCP_PROJECT`
+> keeps serving the old cloud's names until the TTL lapses. At 15s that is
+> invisible; behind any longer serve-stale window it would not be.
 
 A cold Tab currently blocks on two cloud round trips run in parallel
-(`completion/sandbox.sh:71`): `gcloud compute instances list` (~2–3s, dominated
-by gcloud's Python startup) and `aws ec2 describe-instances` (~1s). Result is
-cached for 15s (`_SANDBOX_CACHE_TTL`), so the cost recurs whenever the cache
-goes cold. Prior work (`fd5650c`, `e2fea07`, `6d235d4`) shortened the wait but
-never removed it from the critical path.
+(`completion/sandbox.sh:71`): `gcloud compute instances list` and
+`aws ec2 describe-instances` (~1s). Result is cached for 15s
+(`_SANDBOX_CACHE_TTL`), so the cost recurs whenever the cache goes cold. Prior
+work (`fd5650c`, `e2fea07`, `6d235d4`) shortened the wait but never removed it
+from the critical path.
 
 Rough shape: on Tab, print whatever is cached and return immediately, then kick
 off a detached refresh for the next invocation — stale-while-revalidate. After
@@ -168,18 +190,36 @@ Still open, split out of this item:
 
 ## 5. `provider_check_creds` reports a guess instead of the real error
 
-**Status:** Idea (bug)
+**Status:** Shipped (2026-08-06)
 
-`lib/providers/gcp.sh:33` runs the preflight probe with `>/dev/null 2>&1` and,
-on any failure, dies with "set GOOGLE_APPLICATION_CREDENTIALS and GCP_PROJECT"
+`provider_check_creds` now surfaces gcloud's own stderr, `provider_list_all`
+prints it as a warning instead of discarding it, and each cloud is bounded by
+`SANDBOX_CLOUD_TIMEOUT` (default 25s). A new `provider_configured` keeps a cloud
+you never set up silent, so an AWS-only user sees no gcp noise.
+
+**What made this urgent.** A debugging session hit exactly the hidden failure
+this item predicted, and the consequence was worse than "a misleading message":
+`./bin/sandbox list` sat for **85 seconds** and then printed `no sandboxes in
+gcp`. gcloud had been printing `Reauthentication required.` the entire time —
+discarded first by `>/dev/null 2>&1` in the probe, then again by
+`( provider_check_creds ) >/dev/null 2>&1 || exit 0` in `provider_list_all`.
+Finding the cause took roughly twenty turns; the error text would have taken
+one.
+
+The underlying fault was environmental (a network handing out a global IPv6
+address it could not route, so gcloud stalled on a TCP connect timeout for every
+dual-stack Google endpoint — AWS was unaffected because its classic endpoints
+publish no AAAA record). Nothing in this repo could have prevented that. The
+defect was refusing to say so.
+
+Original report:
+
+`lib/providers/gcp.sh:33` ran the preflight probe with `>/dev/null 2>&1` and,
+on any failure, died with "set GOOGLE_APPLICATION_CREDENTIALS and GCP_PROJECT"
 — advice that is wrong (nothing reads that variable) and usually irrelevant.
-
-Observed causes it currently hides: an expired credential needing
-reauthentication (common in Workspace orgs), the Compute Engine API not being
-enabled, and a wrong project id. Each needs a different fix, and the message
-points at none of them.
-
-Fix: capture gcloud's stderr and surface it, rather than substituting a guess.
+Observed causes it hid: an expired credential needing reauthentication (common
+in Workspace orgs), the Compute Engine API not being enabled, and a wrong
+project id. Each needs a different fix, and the message pointed at none of them.
 
 ---
 

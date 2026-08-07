@@ -34,20 +34,81 @@ mc_valid_cloud() {
 # prefixed with its provider (10 fields):
 #   provider handle name state type market launch_epoch ip allowed_cidr ash_hours
 # A cloud whose CLI/credentials aren't usable is skipped silently.
+# Seconds a single cloud may take before it is abandoned. A stalled cloud used
+# to hang every command indefinitely — a broken IPv6 route once made gcloud sit
+# for 76s per call with no output at all. Override with SANDBOX_CLOUD_TIMEOUT.
+: "${SANDBOX_CLOUD_TIMEOUT:=25}"
+
+# _mc_wait_bounded PID SECS — wait for PID, killing it if it outlives SECS.
+# Returns the child's status, or 124 (GNU timeout's convention) if it was killed.
+#
+# A watchdog subshell rather than a polling loop, so `wait` blocks until the
+# child is genuinely done and a healthy cloud adds no latency. macOS ships no
+# timeout(1), and its /bin/bash is 3.2 — no `wait -n`.
+_mc_wait_bounded() {
+    local pid="$1" secs="$2" watchdog rc
+    ( sleep "$secs"; kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+    watchdog=$!
+    wait "$pid" 2>/dev/null; rc=$?
+    kill -TERM "$watchdog" 2>/dev/null
+    wait "$watchdog" 2>/dev/null
+    # 143 = 128 + SIGTERM, i.e. the watchdog fired.
+    [ "$rc" -eq 143 ] && rc=124
+    return "$rc"
+}
+
+# _mc_report_skip PROV RC ERRFILE — say why a cloud produced no rows.
+# rc 0 = fine; rc 3 = not configured, silent by design (an AWS-only user should
+# never see gcp noise); rc 124 = timed out; anything else = configured but
+# failing, so pass along what the cloud's own CLI reported.
+_mc_report_skip() {
+    local prov="$1" rc="$2" errfile="$3" msg
+    # Explicit `if`s, not `[ ... ] && return`: the latter evaluates to the test's
+    # status when it is false, which is a footgun under `set -e`
+    # (see lib/providers/gcp.sh:200).
+    if [ "$rc" -eq 0 ] || [ "$rc" -eq 3 ]; then
+        return 0
+    fi
+    if [ "$rc" -eq 124 ]; then
+        log_warn "$prov skipped — no response within ${SANDBOX_CLOUD_TIMEOUT}s"
+        return 0
+    fi
+    # Strip log.sh's own "[HH:MM:SSZ] ERROR: " prefix from the captured text:
+    # the driver died via die(), and log_warn is about to add a prefix of its
+    # own, so keeping both nests two timestamps in one line.
+    msg="$(tr '\n' ' ' < "$errfile" 2>/dev/null \
+        | sed -e 's/\[[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z\] ERROR: //g' \
+              -e 's/  */ /g; s/^ *//; s/ *$//')"
+    log_warn "$prov skipped — ${msg:-no error output}"
+    return 0
+}
+
 provider_list_all() {
-    local scope="${1:-}" prov
+    local scope="${1:-}" prov out err pid rc
     for prov in $_MC_CLOUDS; do
         [[ -n "$scope" && "$scope" != "$prov" ]] && continue
+        out="$(mktemp "${TMPDIR:-/tmp}/sandbox-mc-out.XXXXXX")" || continue
+        err="$(mktemp "${TMPDIR:-/tmp}/sandbox-mc-err.XXXXXX")" || { rm -f "$out"; continue; }
         (
             set +e
             CLOUD="$prov"
             provider_load 2>/dev/null || exit 0
-            ( provider_check_creds ) >/dev/null 2>&1 || exit 0
+            provider_configured || exit 3
+            provider_check_creds >/dev/null || exit 1
             provider_list 2>/dev/null | while IFS= read -r row; do
                 [ -n "$row" ] && printf '%s\t%s\n' "$prov" "$row"
             done
             exit 0
-        )
+        ) >"$out" 2>"$err" &
+        pid=$!
+        # `|| rc=$?` rather than a bare call: a failing cloud returns non-zero,
+        # which under the callers' `set -e` would abort the whole listing —
+        # including the healthy cloud's rows that are already on disk.
+        rc=0
+        _mc_wait_bounded "$pid" "$SANDBOX_CLOUD_TIMEOUT" || rc=$?
+        cat "$out" 2>/dev/null
+        _mc_report_skip "$prov" "$rc" "$err"
+        rm -f "$out" "$err"
     done
     return 0
 }
