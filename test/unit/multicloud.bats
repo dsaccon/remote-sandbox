@@ -52,6 +52,21 @@ fake_gcloud() {
     printf '%s' "$path"
 }
 
+# slow_stub NAME MARKER REAL SECS — a CLI stub that sleeps SECS on its FIRST call
+# (guarded by MARKER), then execs the real stub REAL. One sleep per cloud however
+# many times its driver calls the CLI, so a cloud's cost is a fixed SECS and the
+# two clouds' costs only stack if they run sequentially. Prints the stub path.
+slow_stub() {
+    local path="$BATS_TEST_TMPDIR/$1" marker="$BATS_TEST_TMPDIR/$2"
+    cat > "$path" <<EOF
+#!/usr/bin/env bash
+if [ ! -e "$marker" ]; then : > "$marker"; sleep $4; fi
+exec "$3" "\$@"
+EOF
+    chmod +x "$path"
+    printf '%s' "$path"
+}
+
 @test "a cloud that was never configured is skipped silently" {
     printf 'AWS_REGION="us-west-2"\n' > "$SANDBOX_REPO_ROOT/config"
     run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
@@ -102,4 +117,28 @@ EOF
     [ "$status" -eq 0 ]
     [[ "$output" == *"aws-box"* ]]
     ! ( echo "$output" | grep -qi "warn" )
+}
+
+@test "both clouds are queried concurrently, not one after another" {
+    with_gcp
+    cat > "$GCLOUD_STUB_RESPONSE" <<'EOF'
+0
+[]
+EOF
+    # Each cloud's CLI sleeps 3s once. Sequential querying costs ~6s; launching
+    # both at once costs ~3s. Assert we land under 5s — comfortably above one
+    # sleep plus overhead, well below the sequential sum. Guards against a
+    # regression back to query-one-cloud-then-the-next.
+    AWS_CMD="$(slow_stub slow-aws aws-slept "$REPO_ROOT/test/unit/stubs/aws-empty" 3)"
+    GCLOUD_CMD="$(slow_stub slow-gcloud gcloud-slept "$REPO_ROOT/test/unit/stubs/gcloud-empty" 3)"
+    export AWS_CMD GCLOUD_CMD
+
+    local start end
+    start="$(date +%s)"
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-list"
+    end="$(date +%s)"
+
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"aws-box"* ]]
+    (( end - start < 5 ))
 }

@@ -33,29 +33,14 @@ mc_valid_cloud() {
 # (SCOPE = aws|gcp to restrict; empty = all), one tab-separated row per box,
 # prefixed with its provider (10 fields):
 #   provider handle name state type market launch_epoch ip allowed_cidr ash_hours
-# A cloud whose CLI/credentials aren't usable is skipped silently.
+# A cloud whose CLI/credentials aren't usable is skipped silently. The clouds are
+# queried CONCURRENTLY (see the function body), so a dual-cloud command waits out
+# only the slower cloud, not the sum of both.
+
 # Seconds a single cloud may take before it is abandoned. A stalled cloud used
 # to hang every command indefinitely — a broken IPv6 route once made gcloud sit
 # for 76s per call with no output at all. Override with SANDBOX_CLOUD_TIMEOUT.
 : "${SANDBOX_CLOUD_TIMEOUT:=25}"
-
-# _mc_wait_bounded PID SECS — wait for PID, killing it if it outlives SECS.
-# Returns the child's status, or 124 (GNU timeout's convention) if it was killed.
-#
-# A watchdog subshell rather than a polling loop, so `wait` blocks until the
-# child is genuinely done and a healthy cloud adds no latency. macOS ships no
-# timeout(1), and its /bin/bash is 3.2 — no `wait -n`.
-_mc_wait_bounded() {
-    local pid="$1" secs="$2" watchdog rc
-    ( sleep "$secs"; kill -TERM "$pid" 2>/dev/null ) >/dev/null 2>&1 &
-    watchdog=$!
-    wait "$pid" 2>/dev/null; rc=$?
-    kill -TERM "$watchdog" 2>/dev/null
-    wait "$watchdog" 2>/dev/null
-    # 143 = 128 + SIGTERM, i.e. the watchdog fired.
-    [ "$rc" -eq 143 ] && rc=124
-    return "$rc"
-}
 
 # _mc_report_skip PROV RC ERRFILE — say why a cloud produced no rows.
 # rc 0 = fine; rc 3 = not configured, silent by design (an AWS-only user should
@@ -84,7 +69,13 @@ _mc_report_skip() {
 }
 
 provider_list_all() {
-    local scope="${1:-}" prov out err pid rc
+    local scope="${1:-}" prov out err qpid
+    local -a provs outs errs qpids wpids
+
+    # Phase 1 — launch every in-scope cloud AT ONCE. Both the query and its stall
+    # watchdog are backgrounded here, before any cloud is awaited, so a dual-cloud
+    # command waits out only the slower cloud, not the sum. (Previously each cloud
+    # ran to completion before the next one started.)
     for prov in $_MC_CLOUDS; do
         [[ -n "$scope" && "$scope" != "$prov" ]] && continue
         out="$(mktemp "${TMPDIR:-/tmp}/sandbox-mc-out.XXXXXX")" || continue
@@ -100,15 +91,38 @@ provider_list_all() {
             done
             exit 0
         ) >"$out" 2>"$err" &
-        pid=$!
-        # `|| rc=$?` rather than a bare call: a failing cloud returns non-zero,
+        qpid=$!
+        # Watchdog spawned NOW, next to its query, so the timeout clock starts at
+        # launch — not when the reap loop reaches this cloud, which would let two
+        # stalled clouds serialize back to 2×SANDBOX_CLOUD_TIMEOUT. macOS ships no
+        # timeout(1) and its /bin/bash is 3.2 (no `wait -n`), hence sleep+kill.
+        ( sleep "$SANDBOX_CLOUD_TIMEOUT"; kill -TERM "$qpid" 2>/dev/null ) >/dev/null 2>&1 &
+        provs+=("$prov"); outs+=("$out"); errs+=("$err")
+        qpids+=("$qpid"); wpids+=("$!")
+    done
+    [ "${#provs[@]}" -eq 0 ] && return 0
+
+    # Phase 2 — reap in cloud order. Everything above is already running, so this
+    # sequential collection still costs only the slowest cloud's wall time, and it
+    # keeps output in a stable provider order with each skip attributed correctly.
+    local i n rc
+    n="${#provs[@]}"
+    for (( i = 0; i < n; i++ )); do
+        # `|| rc=$?` rather than a bare wait: a failing cloud returns non-zero,
         # which under the callers' `set -e` would abort the whole listing —
-        # including the healthy cloud's rows that are already on disk.
+        # including the healthy cloud's rows already on disk.
         rc=0
-        _mc_wait_bounded "$pid" "$SANDBOX_CLOUD_TIMEOUT" || rc=$?
-        cat "$out" 2>/dev/null
-        _mc_report_skip "$prov" "$rc" "$err"
-        rm -f "$out" "$err"
+        wait "${qpids[$i]}" 2>/dev/null || rc=$?
+        # Stop this cloud's watchdog (a no-op if it already fired) and reap it so
+        # no stray job is left behind. Guarded: both may legitimately fail.
+        kill -TERM "${wpids[$i]}" 2>/dev/null || :
+        wait "${wpids[$i]}" 2>/dev/null || :
+        # 143 = 128 + SIGTERM: the watchdog killed the query. Normalize to 124,
+        # GNU timeout's convention, which _mc_report_skip reads as "timed out".
+        if [ "$rc" -eq 143 ]; then rc=124; fi
+        cat "${outs[$i]}" 2>/dev/null
+        _mc_report_skip "${provs[$i]}" "$rc" "${errs[$i]}"
+        rm -f "${outs[$i]}" "${errs[$i]}"
     done
     return 0
 }
