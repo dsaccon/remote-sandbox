@@ -223,6 +223,50 @@ project id. Each needs a different fix, and the message pointed at none of them.
 
 ---
 
+## 6. `down` leaks the security group of a renamed sandbox
+
+**Status:** Idea (bug)
+
+`provider_cleanup_net` (`lib/providers/aws.sh`) derives the security group name
+from the sandbox's *current* name — `<name>-sg`. But the SG's name is fixed when
+`aws_create_per_sandbox_sg` creates it at launch, and EC2 security-group names
+are immutable. Rename a box and the two diverge permanently.
+
+Renaming is not hypothetical: every lookup in the CLI resolves through the EC2
+`Name` tag (`lib/aws.sh`), so retagging an instance renames it as far as `list`,
+`ssh`, `scp` and `down` are concerned. Doing that leaves cleanup hunting for an
+SG that never existed. The miss returns `InvalidGroup.NotFound`, which
+`provider_cleanup_net` deliberately swallows as "legacy sandbox sharing the old
+shared SG" — so the real group is left behind with no warning at all.
+
+Observed on a live account: both running sandboxes had mismatched SGs
+(`mega-stuff` → `sandbox-80f5b81f-sg`, `dave-misc` → `sandbox-d30921b1-sg`), so
+both were set to leak on teardown. The same account had accumulated 13 orphaned
+groups from the earlier leak that `3a81f33` fixed. A leaked SG later blocks
+`up --name <original-name>` with `InvalidGroup.Duplicate`, permanently.
+
+Rough shape — stop deriving the name. Either:
+
+- look the group up by its `SandboxName` tag, which `aws_create_per_sandbox_sg`
+  already sets at creation; or
+- read the instance's attached group IDs *before* terminating it, and delete
+  those by ID.
+
+The second is more robust (independent of both tags and naming) but must not
+touch a shared or default group, so it needs to filter to groups tagged
+`Project=claude-sandbox`.
+
+Constraint: keep a silent path for genuinely-absent groups. The current
+`NotFound` branch exists because pre-per-sandbox-SG boxes share an older group
+and would otherwise warn on every `down`. Whatever replaces the name lookup has
+to stay quiet for those while no longer hiding this case.
+
+GCP: `<name>-fw` rules are derived the same way, but GCE instance names are
+immutable, so a rename can't cause the drift there. Worth confirming no other
+path can desynchronise them before treating this as AWS-only.
+
+---
+
 ## Adding to this list
 
 Append a new numbered section with a **Status** line and enough context that
