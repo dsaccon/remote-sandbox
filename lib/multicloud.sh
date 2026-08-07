@@ -241,11 +241,22 @@ mc_terminate() {
 # clouds (SCOPE = aws|gcp to restrict; empty = all), one tab-separated row per
 # image, prefixed with its provider (7 fields):
 #   provider id name created_epoch size_gb current in_use
-# A cloud whose CLI/credentials aren't usable is skipped silently.
+# A cloud whose CLI/credentials aren't usable is skipped silently. Like
+# provider_list_all, the clouds are queried CONCURRENTLY and each is bounded by
+# SANDBOX_CLOUD_TIMEOUT, so a dual-cloud query waits out only the slower cloud and
+# a stalled cloud can no longer hang list-images / delete-image indefinitely.
 provider_images_all() {
-    local scope="${1:-}" prov
+    local scope="${1:-}" prov out qpid
+    local -a provs outs qpids wpids
+
+    # Phase 1 — launch every in-scope cloud at once, each guarded by a stall
+    # watchdog. See provider_list_all for the launch-then-reap rationale; the one
+    # difference is that image queries skip a cloud SILENTLY on any credential or
+    # config failure (an unusable cloud just contributes no image rows), so there
+    # is no err capture or skip reporting here.
     for prov in $_MC_CLOUDS; do
         [[ -n "$scope" && "$scope" != "$prov" ]] && continue
+        out="$(mktemp "${TMPDIR:-/tmp}/sandbox-mc-img.XXXXXX")" || continue
         (
             set +e
             CLOUD="$prov"
@@ -255,7 +266,26 @@ provider_images_all() {
                 [ -n "$row" ] && printf '%s\t%s\n' "$prov" "$row"
             done
             exit 0
-        )
+        ) >"$out" 2>/dev/null &
+        qpid=$!
+        # Watchdog started at launch so the timeout clock runs from here, not from
+        # the reap loop — same reasoning as provider_list_all.
+        ( sleep "$SANDBOX_CLOUD_TIMEOUT"; kill -TERM "$qpid" 2>/dev/null ) >/dev/null 2>&1 &
+        provs+=("$prov"); outs+=("$out"); qpids+=("$qpid"); wpids+=("$!")
+    done
+    [ "${#provs[@]}" -eq 0 ] && return 0
+
+    # Phase 2 — reap in cloud order; a stalled cloud is abandoned once its
+    # watchdog fires. Guarded waits/kills keep this set -e-safe (it runs inside a
+    # $(...) under set -euo pipefail).
+    local i n
+    n="${#provs[@]}"
+    for (( i = 0; i < n; i++ )); do
+        wait "${qpids[$i]}" 2>/dev/null || :
+        kill -TERM "${wpids[$i]}" 2>/dev/null || :
+        wait "${wpids[$i]}" 2>/dev/null || :
+        cat "${outs[$i]}" 2>/dev/null
+        rm -f "${outs[$i]}"
     done
     return 0
 }
