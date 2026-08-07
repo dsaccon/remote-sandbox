@@ -267,6 +267,53 @@ path can desynchronise them before treating this as AWS-only.
 
 ---
 
+## 7. Query AWS and GCP concurrently in the command path
+
+**Status:** Shipped for `provider_list_all` (2026-08-07) — `list` / `ssh` /
+`scp` / `down` now launch both clouds' queries (and watchdogs) up front and reap
+in order, so a dual-cloud command waits out the slower cloud, not the sum;
+covered by a bats timing test. `provider_images_all` (`list-images` /
+`delete-image`) is still sequential — the remaining follow-up below.
+
+The tab-completion path already queries both clouds **concurrently**
+(`completion/sandbox.sh:70`, `sort -u <(...aws...) <(...gcp...)`), so a cold Tab
+waits out only the slower cloud. The actual commands do **not** — they query the
+clouds one after another.
+
+`provider_list_all` (`lib/multicloud.sh`) — which backs **`list`, `ssh`, `scp`,
+and `down`** — loops over the clouds, backgrounds each query, then immediately
+`wait`s for it before starting the next. The `&` is there only so the stall
+watchdog (item #5) can bound a hung cloud; it buys **no** cross-cloud
+concurrency. So AWS fully completes before GCP even starts: a dual-cloud command
+pays `aws + gcp`, not `max(aws, gcp)`. `provider_images_all` (backs
+`list-images` / `delete-image`) is fully sequential too — plain subshells, and
+it has no timeout at all.
+
+Payoff (dual-cloud users only — `provider_configured` already short-circuits a
+cloud you never set up, so single-cloud users are unaffected):
+
+- **Healthy case:** `list` / `ssh` / `scp` / `down` drop from two back-to-back
+  round trips (~2s) to one (~1s).
+- **Degraded case — the bigger win:** two slow/stalled clouds cost up to
+  `2 × SANDBOX_CLOUD_TIMEOUT` sequentially; in parallel the whole thing is
+  bounded to a single timeout window. This is the failure mode item #5 hit (85s).
+
+**Shape:** launch every in-scope cloud's query *and its watchdog* up front, then
+reap in a stable cloud order. The watchdogs must start at launch, not at reap —
+otherwise two stalled clouds still serialize to `2 × timeout`.
+
+**Constraints — must preserve item #5's behavior:** per-cloud timeout bound, the
+cloud's own error text surfaced, an unconfigured cloud stays silent, and a broken
+cloud never suppresses the healthy cloud's rows. All of this runs under
+`set -euo pipefail` inside a `$(...)` subshell, so every line has to stay
+`set -e`-safe (guarded `kill`/`wait`).
+
+**Scope:** `provider_list_all` first (the hot path). `provider_images_all` is the
+same treatment at lower priority — the commands it backs are rare admin ops, and
+parallelizing it should also give it the timeout bound it currently lacks.
+
+---
+
 ## Adding to this list
 
 Append a new numbered section with a **Status** line and enough context that
