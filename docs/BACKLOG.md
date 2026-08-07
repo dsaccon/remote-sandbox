@@ -269,11 +269,12 @@ path can desynchronise them before treating this as AWS-only.
 
 ## 7. Query AWS and GCP concurrently in the command path
 
-**Status:** Shipped for `provider_list_all` (2026-08-07) — `list` / `ssh` /
-`scp` / `down` now launch both clouds' queries (and watchdogs) up front and reap
-in order, so a dual-cloud command waits out the slower cloud, not the sum;
-covered by a bats timing test. `provider_images_all` (`list-images` /
-`delete-image`) is still sequential — the remaining follow-up below.
+**Status:** Shipped (2026-08-07). Both `provider_list_all` (`list` / `ssh` /
+`scp` / `down`) and `provider_images_all` (`list-images` / `delete-image`) now
+launch every in-scope cloud's query + watchdog up front and reap in order, so a
+dual-cloud command waits out the slower cloud, not the sum. `provider_images_all`
+also gained the per-cloud `SANDBOX_CLOUD_TIMEOUT` bound it previously lacked.
+Both are covered by bats timing tests.
 
 The tab-completion path already queries both clouds **concurrently**
 (`completion/sandbox.sh:70`, `sort -u <(...aws...) <(...gcp...)`), so a cold Tab
@@ -308,9 +309,9 @@ cloud never suppresses the healthy cloud's rows. All of this runs under
 `set -euo pipefail` inside a `$(...)` subshell, so every line has to stay
 `set -e`-safe (guarded `kill`/`wait`).
 
-**Scope:** `provider_list_all` first (the hot path). `provider_images_all` is the
-same treatment at lower priority — the commands it backs are rare admin ops, and
-parallelizing it should also give it the timeout bound it currently lacks.
+**Scope:** done in two commits — `provider_list_all` (the hot path) first, then
+`provider_images_all` (rare admin ops), which also picked up the
+`SANDBOX_CLOUD_TIMEOUT` bound it previously lacked.
 
 ---
 
