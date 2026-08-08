@@ -11,6 +11,14 @@ setup() {
 AWS_REGION="us-west-2"
 SSH_USER="ubuntu"
 EOF
+    # Isolate SSH_KEY_FILE from the developer's machine. config.sh defaults it to
+    # ~/.ssh/<SSH_KEY_NAME>.pem, which EXISTS on a real setup — and when it's
+    # readable, sandbox-ssh prepends `-i <key> -o IdentitiesOnly=yes` before the
+    # destination, shifting the `SSH_CMD: ubuntu@<ip>` assertions and failing them
+    # only on a configured machine (green in CI). Pin it to a non-existent path so
+    # `-r` is false → no `-i`. Env override (SANDBOX_<KEY>) beats the default and
+    # survives the per-test config rewrites.
+    export SANDBOX_SSH_KEY_FILE="$BATS_TEST_TMPDIR/no-ssh-key"
     export AWS_STUB_LOG="$BATS_TEST_TMPDIR/aws.log"; : > "$AWS_STUB_LOG"
     export AWS_STUB_RESPONSE="$BATS_TEST_TMPDIR/aws-resp"
     export AWS_CMD="$REPO_ROOT/test/unit/stubs/aws-empty"
