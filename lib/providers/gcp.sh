@@ -307,11 +307,23 @@ provider_list() {
     # shared project, since they consume provider_list via provider_list_all.
     local owner_label
     owner_label="$(sandbox_owner_label)"
-    inst="$(_gcloud compute instances list \
+    # Fetch instances and firewall rules CONCURRENTLY — the two queries are
+    # independent, so on a machine that overlaps CLIs this halves the wall time.
+    # An empty temp file (failed query) falls back to '[]', matching the old
+    # `|| echo '[]'`.
+    local inst_out fw_out inst_pid fw_pid
+    inst_out="$(mktemp "${TMPDIR:-/tmp}/sandbox-gcp-inst.XXXXXX")"
+    fw_out="$(mktemp "${TMPDIR:-/tmp}/sandbox-gcp-fw.XXXXXX")"
+    _gcloud compute instances list \
         --filter="labels.project=claude-sandbox AND labels.owner=$owner_label" \
-        --zones="$GCP_ZONE" --format=json 2>/dev/null || echo '[]')"
-    fw="$(_gcloud compute firewall-rules list \
-        --filter="name~-fw$" --format=json 2>/dev/null || echo '[]')"
+        --zones="$GCP_ZONE" --format=json >"$inst_out" 2>/dev/null & inst_pid=$!
+    _gcloud compute firewall-rules list \
+        --filter="name~-fw$" --format=json >"$fw_out" 2>/dev/null & fw_pid=$!
+    wait "$inst_pid" 2>/dev/null || :
+    wait "$fw_pid" 2>/dev/null || :
+    inst="$(cat "$inst_out" 2>/dev/null)"; [[ -z "$inst" ]] && inst='[]'
+    fw="$(cat "$fw_out" 2>/dev/null)"; [[ -z "$fw" ]] && fw='[]'
+    rm -f "$inst_out" "$fw_out"
     # jq emits: name rawstatus machinetype market rawts ip ash allowed disk
     printf '%s' "$inst" | jq -r --argjson fw "$fw" '
         ($fw | map({(.targetTags[0] // ""): (.sourceRanges[0] // "-")}) | add // {}) as $cidr |

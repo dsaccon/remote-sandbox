@@ -140,6 +140,23 @@ EOF
     [[ "$output" == *"sandbox-abc"*"ready"*"e2-standard-4"*"spot"*"5.6.7.8"*"8"* ]]
 }
 
+@test "provider_list fetches instances and firewall rules concurrently" {
+    # Two independent gcloud calls; each sleeps 3s (stub below). Serial querying
+    # is ~6s, concurrent ~3s. Assert under 5s — guards against serial regression.
+    set_response 0 '[{"name":"sandbox-abc","status":"RUNNING","machineType":"https://x/machineTypes/e2-standard-4","creationTimestamp":"2026-07-03T10:00:00.000-07:00","scheduling":{"provisioningModel":"SPOT"},"networkInterfaces":[{"accessConfigs":[{"natIP":"5.6.7.8"}]}],"metadata":{"items":[{"key":"auto-shutdown-hours","value":"8"}]},"tags":{"items":["sandbox-abc"]}}]'
+    local slow="$BATS_TEST_TMPDIR/slow-gcloud"
+    printf '#!/usr/bin/env bash\nsleep 3\nexec "%s" "$@"\n' "$REPO_ROOT/test/unit/stubs/gcloud-empty" > "$slow"
+    chmod +x "$slow"; GCLOUD_CMD="$slow"
+
+    local start end
+    start="$(date +%s)"
+    run provider_list
+    end="$(date +%s)"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"sandbox-abc"* ]]
+    (( end - start < 5 ))
+}
+
 @test "provider_resolve_ip returns the natIP for a RUNNING box" {
     cat > "$GCLOUD_STUB_RESPONSE" <<EOF
 0
