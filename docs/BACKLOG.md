@@ -354,6 +354,65 @@ order-independent).
 
 ---
 
+## 9. Manage `~/.ssh/config` entries for sandboxes
+
+**Status:** Idea
+
+Let `remote-sandbox` write / refresh / remove host entries in the user's SSH
+config so a box is reachable by name from **native** tooling — `ssh <name>`,
+`scp`, `rsync`, git-over-ssh, IDE Remote-SSH (VS Code / Cursor) — without going
+through `sandbox ssh` each time.
+
+**Primary use (decided 2026-08-08): plain `ssh` / `scp` / `rsync` by name** —
+not IDE Remote-SSH. So no ControlMaster/keepalive tuning is needed and entries
+needn't survive long-lived daemon sessions; they just need to be correct while
+the box exists. Note the overlap: `sandbox ssh` / `sandbox scp` already cover the
+interactive case, so the marginal value is letting *arbitrary* ssh-based tools
+(plain `ssh`, `rsync`, `git`) address a box by name. Real, but a convenience
+layer — lower priority than the active bug (#6).
+
+**Feasibility: good.** The tool already resolves name→IP (`mc_resolve_ip`) and
+has the `up` / `down` lifecycle hooks to attach to. The work is entirely local
+file management.
+
+**Recommended approach — a dedicated Include file, not inline edits.** Own a
+single file (e.g. `~/.ssh/claude-sandbox.config`) and add ONE
+`Include ~/.ssh/claude-sandbox.config` line to `~/.ssh/config`, once and
+idempotently. We only ever rewrite the file we own → **no risk of clobbering
+hand-edited config**. (OpenSSH ≥7.3 supports `Include`; macOS ships new enough.)
+Fallback if Include is unwanted: a delimited managed block
+(`# >>> claude-sandbox >>>` … `# <<< claude-sandbox <<<`) edited surgically.
+
+**Lifecycle — a sync model, not write-once.** Boxes are ephemeral and IPs change
+on stop/start (see #1), so entries go stale fast:
+
+- `up` → add/update the box's entry.
+- `down` → remove it.
+- `sandbox ssh-config sync` (or fold into `list`) → reconcile the managed file
+  from the current cross-cloud `list`: add missing, fix changed IPs, drop
+  terminated. This is the robust primitive; the up/down hooks are conveniences.
+
+**Entry contents:** `Host <name>` (consider a prefix to avoid colliding with the
+user's own hosts), `HostName <ip>`, `User $SSH_USER`, `IdentityFile
+$SSH_KEY_FILE`. Handle host-key churn from reused ephemeral IPs:
+`StrictHostKeyChecking accept-new` + a dedicated `UserKnownHostsFile`
+(e.g. `~/.ssh/claude-sandbox_known_hosts`) so it never warns on a reused IP or
+pollutes the real `known_hosts`.
+
+**Opt-in.** Gate behind a config flag (e.g. `MANAGE_SSH_CONFIG=true`), off by
+default — it writes to a security-sensitive file, which matters given this
+project's minimal-blast-radius posture.
+
+**Testing.** Add an `SSH_CONFIG_FILE` override (defaults to `~/.ssh/config`) so
+tests write to a temp file, mirroring the existing `AWS_CMD` / `GCLOUD_CMD` stub
+seam.
+
+**Open questions:** whether to also manage `known_hosts` (vs the
+`accept-new` + dedicated-file approach above); interaction with #1 (a restarted
+box needs its `HostName` refreshed).
+
+---
+
 ## Adding to this list
 
 Append a new numbered section with a **Status** line and enough context that
