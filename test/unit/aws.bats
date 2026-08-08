@@ -82,6 +82,32 @@ set_response() {
     [ "$(printf '%s' "$row" | awk -F'\t' '{print $5}')" = "on-demand" ]
 }
 
+@test "provider_list fetches status/SG/volumes concurrently, not serially" {
+    source "$REPO_ROOT/lib/providers/aws.sh"
+    # A running instance with a security group and a root volume fires all three
+    # secondary lookups. Each aws call sleeps 2s (stub below), so serial querying
+    # is ~8s (describe-instances + 3) and concurrent ~4s (describe-instances +
+    # max of 3). Assert under 6s — guards against regressing to serial calls.
+    set_response 0 '{"Reservations":[{"Instances":[
+      {"InstanceId":"i-aaa","InstanceType":"m7i-flex.xlarge","State":{"Name":"running"},
+       "PublicIpAddress":"5.6.7.8","RootDeviceName":"/dev/xvda",
+       "SecurityGroups":[{"GroupId":"sg-1"}],
+       "BlockDeviceMappings":[{"DeviceName":"/dev/xvda","Ebs":{"VolumeId":"vol-1"}}],
+       "Tags":[{"Key":"Name","Value":"aws-box"},{"Key":"Project","Value":"claude-sandbox"}]}
+    ]}]}'
+    local slow="$BATS_TEST_TMPDIR/slow-aws"
+    printf '#!/usr/bin/env bash\nsleep 2\nexec "%s" "$@"\n' "$REPO_ROOT/test/unit/stubs/aws-empty" > "$slow"
+    chmod +x "$slow"; AWS_CMD="$slow"
+
+    local start end
+    start="$(date +%s)"
+    run provider_list
+    end="$(date +%s)"
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"aws-box"* && "$output" == *"5.6.7.8"* ]]
+    (( end - start < 6 ))
+}
+
 # provider_cleanup_net used to run `delete-security-group ... 2>/dev/null` and
 # log only on success. That silently swallowed UnauthorizedOperation, so a
 # too-narrow IAM policy leaked a security group on every `down` — invisibly,

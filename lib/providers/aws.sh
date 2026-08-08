@@ -252,38 +252,18 @@ provider_list() {
         return 0
     fi
 
-    # Get instance-status for every running instance in one batch call.
-    local running_ids=()
+    # Extract the ID lists for the three secondary lookups. These are jq over the
+    # describe-instances output above — no network — so they stay sequential:
+    #   running_ids → instance-status, sg_ids → SG ingress, vol_ids → root disk.
+    local running_ids=() sg_ids=() vol_ids=()
     while IFS= read -r rid; do
         [[ -z "$rid" ]] && continue
         running_ids+=("$rid")
     done < <(printf '%s' "$json" | jq -r '.Reservations[].Instances[] | select(.State.Name=="running") | .InstanceId')
-
-    local status_json
-    if [[ ${#running_ids[@]} -gt 0 ]]; then
-        status_json="$(aws_describe_instance_status_for "${running_ids[@]}")"
-    else
-        status_json='{"InstanceStatuses":[]}'
-    fi
-
-    # Collect every SG ID across all instances so we can batch-fetch ingress
-    # rules in one call and look them up per-instance in jq below.
-    local sg_ids=()
     while IFS= read -r sg; do
         [[ -z "$sg" ]] && continue
         sg_ids+=("$sg")
     done < <(printf '%s' "$json" | jq -r '[.Reservations[].Instances[].SecurityGroups[]?.GroupId] | unique[]')
-
-    local sg_json
-    if [[ ${#sg_ids[@]} -gt 0 ]]; then
-        sg_json="$(aws_describe_sgs_by_ids "${sg_ids[@]}")"
-    else
-        sg_json='{"SecurityGroups":[]}'
-    fi
-
-    # Root-volume sizes: describe-instances carries only volume IDs, so batch
-    # every instance's root volume ID into one describe-volumes call for size.
-    local vol_ids=()
     while IFS= read -r vid; do
         [[ -z "$vid" || "$vid" == "null" ]] && continue
         vol_ids+=("$vid")
@@ -292,15 +272,36 @@ provider_list() {
         | (.RootDeviceName) as $rdn
         | [.BlockDeviceMappings[]? | select(.DeviceName==$rdn) | .Ebs.VolumeId] | .[0] // empty')
 
-    # Default to empty (→ disk "-") so a describe-volumes failure (e.g. no
-    # ec2:DescribeVolumes permission) degrades gracefully instead of breaking
-    # the whole listing via an invalid --argjson.
-    local vol_json='{"Volumes":[]}' _vj
-    if [[ ${#vol_ids[@]} -gt 0 ]]; then
-        if _vj="$(aws_describe_volumes "${vol_ids[@]}" 2>/dev/null)" && [[ -n "$_vj" ]]; then
-            vol_json="$_vj"
-        fi
+    # Fetch instance-status, SG ingress, and root-volume sizes CONCURRENTLY: each
+    # is one AWS-CLI round-trip that depends only on describe-instances above, not
+    # on the others, so on a machine that overlaps CLIs this collapses three
+    # serial calls into ~one. Each writes to a temp file; a call that is skipped
+    # (no ids) or fails (e.g. no ec2:DescribeVolumes permission) leaves an EMPTY
+    # file, and the defaults below preserve today's graceful degradation.
+    local status_out sg_out vol_out status_pid='' sg_pid='' vol_pid=''
+    status_out="$(mktemp "${TMPDIR:-/tmp}/sandbox-aws-status.XXXXXX")"
+    sg_out="$(mktemp "${TMPDIR:-/tmp}/sandbox-aws-sg.XXXXXX")"
+    vol_out="$(mktemp "${TMPDIR:-/tmp}/sandbox-aws-vol.XXXXXX")"
+    if [[ ${#running_ids[@]} -gt 0 ]]; then
+        aws_describe_instance_status_for "${running_ids[@]}" >"$status_out" 2>/dev/null & status_pid=$!
     fi
+    if [[ ${#sg_ids[@]} -gt 0 ]]; then
+        aws_describe_sgs_by_ids "${sg_ids[@]}" >"$sg_out" 2>/dev/null & sg_pid=$!
+    fi
+    if [[ ${#vol_ids[@]} -gt 0 ]]; then
+        aws_describe_volumes "${vol_ids[@]}" >"$vol_out" 2>/dev/null & vol_pid=$!
+    fi
+    [[ -n "$status_pid" ]] && { wait "$status_pid" 2>/dev/null || :; }
+    [[ -n "$sg_pid" ]] && { wait "$sg_pid" 2>/dev/null || :; }
+    [[ -n "$vol_pid" ]] && { wait "$vol_pid" 2>/dev/null || :; }
+
+    # "[]" shapes for skipped/failed calls keep the jq join below producing "-"
+    # placeholders rather than breaking on an invalid --argjson.
+    local status_json='{"InstanceStatuses":[]}' sg_json='{"SecurityGroups":[]}' vol_json='{"Volumes":[]}'
+    [[ -s "$status_out" ]] && status_json="$(cat "$status_out")"
+    [[ -s "$sg_out" ]] && sg_json="$(cat "$sg_out")"
+    [[ -s "$vol_out" ]] && vol_json="$(cat "$vol_out")"
+    rm -f "$status_out" "$sg_out" "$vol_out"
 
     local now_epoch; now_epoch="$(date -u +%s)"
     # Join instance data with status data + SG ingress in jq. allowed_cidr

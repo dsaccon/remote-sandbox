@@ -315,6 +315,45 @@ cloud never suppresses the healthy cloud's rows. All of this runs under
 
 ---
 
+## 8. Speed up the drivers — collapse each cloud's serial CLI calls
+
+**Status:** Shipped (2026-08-07). Both drivers' `provider_list` now fetch their
+independent secondary CLI calls concurrently — AWS: instance-status / SG /
+volumes (which each depend only on describe-instances); GCP: `instances list` /
+`firewall-rules list`. Measured `provider_list` with a per-call-sleep stub: AWS
+4.77s→2.47s, GCP 2.52s→1.34s, so a dual-cloud `list` should drop ~3.5s→~2s. A
+bats timing test guards each driver.
+
+Item #7 made the two clouds run concurrently, but each cloud's *own* driver still
+fires several CLI calls **in series**, and CLI process cold-starts (`aws` /
+`gcloud` are Python, ~0.5–1s each) plus their network round-trips dominate
+`list`'s wall time. Measured by wall-clock: `--cloud aws` ~3s, `--cloud gcp`
+~3s, both ~3.5s — so #7 *is* overlapping the clouds (3.5 ≈ `max`, not `6` =
+`sum`), but each cloud is individually slow. Because the default `list` is gated
+by the slower cloud, **both** drivers need this or the default won't improve.
+
+AWS `provider_list` (`lib/providers/aws.sh`) — four serial calls:
+1. `describe-instances` (base)
+2. `describe-instance-status`
+3. `describe-security-groups`
+4. `describe-volumes`
+
+Calls 2–4 depend only on call 1's output, not on each other → run them
+concurrently. ~4 serial → 1 + max(3) ≈ 2 rounds.
+
+GCP `provider_list` (`lib/providers/gcp.sh`) — two serial, independent calls
+(`instances list`, `firewall-rules list`) → run concurrently. ~2 → 1 round.
+
+The machine overlaps concurrent CLIs (proven by #7's 3.5s ≈ max), so this pays
+off. Same launch-then-reap pattern.
+
+**Constraint:** preserve graceful degradation (missing `ec2:DescribeVolumes` →
+DISK `-`; a failed query → empty list), and don't depend on CLI call *order* —
+concurrent calls make the order non-deterministic (the stub log is already
+order-independent).
+
+---
+
 ## Adding to this list
 
 Append a new numbered section with a **Status** line and enough context that
