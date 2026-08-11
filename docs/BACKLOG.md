@@ -114,8 +114,28 @@ would be the right primitive there, not Cloud Run *services*.
 
 ## 3. Make tab completion instant (serve cache, refresh in background)
 
-**Status:** Idea — **premise disproved, needs re-measuring before anyone builds
-it.** Downgraded from Accepted 2026-08-06.
+**Status:** Partly shipped 2026-08-11 — the cheap fix, not the full SWR feature.
+
+Measured a cold `_sandbox_list_names_fresh` (2026-08-11): **7.2s the first run,
+then ~0.8s** — and the split is aws ~1.2s / gcp ~0.7s. So the 7.2s was a one-time
+**credential/DNS warmup** (first `gcloud`/`aws` call of a session refreshes its
+token; you'd pay it on any cloud command), *not* a per-Tab cost, and caching
+can't remove it. Steady-state cold Tab is ~0.8s, already cached. That confirms
+the skepticism below: full stale-while-revalidate isn't worth its complexity.
+
+Shipped instead, for the "`up` → `ssh <newbox><Tab>`" flow:
+- `sandbox up` primes the names cache with the just-launched box (reuses
+  completion's own query + cache path, backgrounded, best-effort).
+- `_SANDBOX_CACHE_TTL` 15s → **120s** so that primed entry is still fresh when the
+  box reaches ready (~60-90s) and you tab to `ssh` it.
+
+Follow-ups the longer TTL invites (both minor, left open): invalidate the names
+cache on `down` so a terminated box doesn't linger up to 120s in completion; and
+key `_sandbox_cached` on the config file's *contents* rather than its path (see
+the last note below) so switching `CLOUD`/`GCP_PROJECT` doesn't serve stale
+names for the window. Full SWR is still the ceiling if ~0.8s ever isn't enough.
+
+Original analysis (still the reason not to build SWR):
 
 > **The 2-3s figure below is wrong.** Measured on a dev machine: `gcloud
 > version` — that is, full SDK and Python startup with no network at all —

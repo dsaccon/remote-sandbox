@@ -32,11 +32,16 @@ _sandbox_cfg() {
 }
 
 # Seconds to reuse the completion cache. The first Tab in a while queries the
-# clouds; repeat Tabs within this window return instantly (no round-trip). Kept
-# short enough that a box you just up'd/down'd — or an image you just baked —
-# reappears quickly. (No spinner: drawing to the terminal mid-completion fights
-# readline's own redraw and garbles the prompt, so we just make it fast.)
-_SANDBOX_CACHE_TTL=15
+# clouds; repeat Tabs within this window return instantly (no round-trip).
+# Sized to outlast a launch: `sandbox up` primes this cache with the new box,
+# and a box takes ~60-90s to reach ready, so the window must survive until you
+# tab to `ssh` it. Trade-offs of the longer window: a box you just `down`ed can
+# linger here up to this long (an `ssh` to it then fails cleanly); and because
+# the cache key is the config *path*, not its contents, switching
+# CLOUD/GCP_PROJECT serves the old cloud's names until it lapses.
+# (No spinner: drawing mid-completion fights readline's own redraw and garbles
+# the prompt, so we just make it fast.)
+_SANDBOX_CACHE_TTL=120
 
 # _sandbox_mtime FILE — file mtime as a unix epoch (macOS then GNU stat).
 _sandbox_mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null; }
