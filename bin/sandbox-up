@@ -121,3 +121,23 @@ cat <<EOF
   then run \`claude\` to authenticate this VM. $shutdown_note
 
 EOF
+
+# Prime the tab-completion names cache so a later `ssh <name><Tab>` — once this
+# box is ready — is a warm cache hit, not a fresh cross-cloud round-trip. Reuse
+# completion's own query + cache logic (guaranteed same cache path/format) and
+# force a rebuild so the box just launched is included; the longer
+# _SANDBOX_CACHE_TTL keeps that entry valid until the box reaches ready. Fully
+# isolated and best-effort: a subshell with set +e and all output discarded, run
+# in the BACKGROUND so a slow or cold-credential cloud call can't delay returning
+# control — and a no-op when the completion script isn't present (e.g. under the
+# unit-test harness), so it never perturbs `up`.
+if [[ -r "$REPO_ROOT/completion/sandbox.sh" ]]; then
+    (
+        set +e
+        # shellcheck source=/dev/null
+        source "$REPO_ROOT/completion/sandbox.sh"
+        _k="$(printf '%s' "${_sandbox_config:-$REPO_ROOT/config}" | cksum | cut -d' ' -f1)"
+        rm -f "${TMPDIR:-/tmp}/sandbox-names-$(id -u)-${_k}"
+        _sandbox_list_names
+    ) >/dev/null 2>&1 &
+fi
