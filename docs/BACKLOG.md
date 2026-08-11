@@ -433,6 +433,28 @@ box needs its `HostName` refreshed).
 
 ---
 
+## 10. `ssh`/`scp` shouldn't warn about an unrelated cloud's failure
+
+**Status:** Shipped 2026-08-11
+
+`ssh <name>` / `scp` / `down <name>` resolve a name→box across **both** clouds
+(`mc_find` → `provider_list_all`). If one cloud's creds are broken (e.g. an
+expired gcloud reauth) but the box lives in the **other** cloud, item #5's
+`gcp skipped — <error>` warning printed anyway — noise on an operation that
+succeeded. Observed: `sandbox ssh mega-stuff` (an AWS box) printed a gcloud
+reauth WARN before connecting.
+
+**Fix:** `mc_find` captures `provider_list_all`'s skip warnings and only replays
+them when the box **isn't** found (where a skipped cloud might have held it).
+Found → silent. `list` still shows skips (it calls `provider_list_all` directly,
+and there you *do* want to know a cloud was skipped).
+
+`mc_find_image` (`delete-image`) already skips silently — `provider_images_all`
+emits no skip warnings — so no change there; surfacing a skip on a *not-found*
+image is a possible symmetric follow-up.
+
+---
+
 ## Adding to this list
 
 Append a new numbered section with a **Status** line and enough context that

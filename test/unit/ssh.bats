@@ -195,3 +195,50 @@ EOF
     [[ "$output" == *"SSH_CMD: ubuntu@5.6.7.8"* ]]
     [[ "$output" != *"CMUX_CMD:"* ]]
 }
+
+# ssh resolves a name across both clouds. A cloud whose creds are broken (e.g.
+# expired gcloud reauth) must not nag when the box is found in the OTHER cloud.
+_reauth_gcloud() {
+    printf '#!/usr/bin/env bash\necho "ERROR: Reauthentication failed." >&2\nexit 1\n' \
+        > "$BATS_TEST_TMPDIR/gcloud-reauth"
+    chmod +x "$BATS_TEST_TMPDIR/gcloud-reauth"
+    export GCLOUD_CMD="$BATS_TEST_TMPDIR/gcloud-reauth"
+}
+
+@test "ssh to an aws box stays quiet about a broken gcp cloud" {
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+AWS_REGION="us-west-2"
+GCP_PROJECT="proj"
+GCP_ZONE="us-west1-b"
+SSH_USER="ubuntu"
+EOF
+    cat > "$AWS_STUB_RESPONSE" <<'EOF'
+0
+{"Reservations":[{"Instances":[
+  {"InstanceId":"i-aaa","PublicIpAddress":"5.6.7.8","State":{"Name":"running"},
+   "Tags":[{"Key":"Name","Value":"sandbox-x"},{"Key":"Project","Value":"claude-sandbox"}]}
+]}]}
+EOF
+    _reauth_gcloud
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-ssh" sandbox-x
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"SSH_CMD: ubuntu@5.6.7.8"* ]]
+    # Box found in aws — the gcp reauth failure is irrelevant noise here.
+    [[ "$output" != *"gcp skipped"* ]]
+}
+
+@test "ssh surfaces a broken gcp cloud when the box is NOT found" {
+    cat > "$SANDBOX_REPO_ROOT/config" <<'EOF'
+AWS_REGION="us-west-2"
+GCP_PROJECT="proj"
+GCP_ZONE="us-west1-b"
+SSH_USER="ubuntu"
+EOF
+    printf '0\n{"Reservations":[]}\n' > "$AWS_STUB_RESPONSE"
+    _reauth_gcloud
+    run "$SANDBOX_REPO_ROOT/bin/sandbox-ssh" ghost
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"no sandbox named ghost"* ]]
+    # Not found — gcp was skipped and might have held it, so say so.
+    [[ "$output" == *"gcp skipped"* ]]
+}

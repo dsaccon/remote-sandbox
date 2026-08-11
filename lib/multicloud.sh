@@ -131,12 +131,27 @@ provider_list_all() {
 # box whose name OR handle == NAME across the in-scope clouds. die on no match,
 # or on an ambiguous one. Used by ssh/scp/down.
 mc_find() {
-    local name="$1" scope="${2:-}" rows match live count clouds ncloud
-    rows="$(provider_list_all "$scope")"
+    local name="$1" scope="${2:-}" rows match live count clouds ncloud skips
+    # Capture provider_list_all's per-cloud skip warnings rather than letting them
+    # print. For a single-box lookup a failed cloud only matters if the box isn't
+    # found (it might have been there); when we DO find the box, an unrelated
+    # cloud's failure is just noise — e.g. `ssh <aws-box>` shouldn't nag about
+    # expired gcp creds. (`list` still surfaces skips — it calls provider_list_all
+    # directly.)
+    skips="$(mktemp "${TMPDIR:-/tmp}/sandbox-mc-skips.XXXXXX" 2>/dev/null)" || skips=""
+    if [[ -n "$skips" ]]; then
+        rows="$(provider_list_all "$scope" 2>"$skips")"
+    else
+        rows="$(provider_list_all "$scope")"
+    fi
     match="$(printf '%s\n' "$rows" | awk -F'\t' -v n="$name" '$3==n || $2==n')"
     if [[ -z "$match" ]]; then
+        # Not found — the box may have been in a cloud that got skipped, so now
+        # replay why, then fail.
+        [[ -n "$skips" ]] && { cat "$skips" >&2; rm -f "$skips"; }
         die "no sandbox named $name in ${scope:-aws or gcp} (try ./bin/sandbox list)"
     fi
+    [[ -n "$skips" ]] && rm -f "$skips"
     # A terminated box keeps its name resolvable for as long as the cloud goes on
     # listing it (~1h on AWS), so reusing a name would otherwise make every
     # lookup ambiguous — you couldn't even `down` the new box by name. Prefer
